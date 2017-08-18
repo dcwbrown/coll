@@ -1,0 +1,17 @@
+/*.sublime-*
+/build/*
+/install/*
+/*.exe
+/*.obj
+/*.[cho]
+/*.lib
+/*.map
+/*.sym
+/*.asm
+**/*.stackdump
+/.DS_store
+**/.DS_store
+**/*.dSYM
+**/.tmp.*
+/*.pdb
+/*.ilk
