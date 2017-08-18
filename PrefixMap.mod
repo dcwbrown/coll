@@ -1,6 +1,6 @@
 (* PrefixMap - minimalist (hopefully) prefix tree *)
 MODULE PrefixMap;
-IMPORT Out, Strings;
+IMPORT Out, Strings, Files;
 
 TYPE
 
@@ -59,13 +59,15 @@ END Error;
 
 
 
-PROCEDURE MakeCharBuf(chars: ARRAY OF CHAR; offset, length: LONGINT): CharBuf;
-VAR cb: CharBuf; i: LONGINT;
+PROCEDURE MakeCharBuf(source: ARRAY OF CHAR; offset, length: LONGINT): CharBuf;
+VAR cb: CharBuf; i, sourceLength: LONGINT;
 BEGIN
-  IF offset > LEN(chars)-1 THEN RETURN NIL END;
-  IF offset + length > LEN(chars)-1 THEN length := LEN(chars) - offset - 1 END;
+  sourceLength := Strings.Length(source);
+  IF offset + length > sourceLength THEN length := sourceLength - offset END;
+  IF length <= 0 THEN RETURN NIL END;
+
   NEW(cb, length+1);
-  FOR i := 0 TO length-1 DO cb[i] := chars[offset+i] END;
+  FOR i := 0 TO length-1 DO cb[i] := source[offset+i] END;
   cb[length] := 0X;
   RETURN cb
 END MakeCharBuf;
@@ -93,7 +95,6 @@ PROCEDURE Find*(key: CharBuf; a: Atom): Atom;
 VAR offset, pl, ml: LONGINT; p: Prefix;
 BEGIN
   offset := 0;
-
   WHILE (a # NIL) & (a IS Prefix) DO
     p := a(Prefix);
     pl := ContentLength(p.characters);
@@ -108,141 +109,42 @@ BEGIN
       END
     END
   END;
-
   IF offset < ContentLength(key) THEN RETURN NIL ELSE RETURN a END
 END Find;
 
 
-
-PROCEDURE NewSuffix(key: CharBuf; offset: LONGINT; target: Atom): Prefix;
-VAR i, l: LONGINT; p: Prefix;
-BEGIN
-  NEW(p); p.next := target; p.mismatch := NIL;
-  IF key = NIL THEN l := 0 ELSE l := LEN(key^) - offset - 1 END;
-  IF l > 0 THEN
-    NEW(p.characters, l+1);
-    FOR i := 0 TO l-1 DO p.characters[i] := key[i+offset] END;
-    p.characters[l] := 0X
-  ELSE
-    p.characters := NIL
-  END;
-  RETURN p
-END NewSuffix;
-
-
-(*  Store methodology
-
-    1) Advance through the key prepresentation while a Prefix record entirely
-       matches the next part of the key.
-    2) If reach a Prefix that partly matches the key, split the prefix into
-       two.
-
-    Now we have reached a point where an existing Prefix record and the new
-    key are either both at the end, or they diverge.
-
-    We need to handle these cases:
-
-    Key       Store         Action
-    ---       -----         ------
-    empty     non-prefix    Key alreay present
-    empty     empty-prefix  Key already present
-    empty     prefix        Follow mismatch link looking for empty prefix
-                            if found:  Key already present
-                            not found: Add empty prefix referencing target
-    nonempty  non-prefix    Create empty prefix and continue as below
-    nonempty  empty-prefix  Add remaining key under mismatch
-    nonempty  prefix
-*)
-
-
 PROCEDURE StoreInternal(key: CharBuf; offset: LONGINT; target: Atom; VAR a: Atom);
-VAR kl, ml, pl: LONGINT; p, q: Prefix;
+VAR kl, pl, ml: LONGINT; p, q: Prefix;
 BEGIN
-  kl := ContentLength(key) - offset;  p := NIL;  ml := 0;
-
-  (* Advance over prefixes that fully match next part of key *)
-  IF (kl > 0) & (a # NIL) & (a IS Prefix) THEN
-    p := a(Prefix);  ml := MatchString(key^, offset, p.characters);
-
-    (*
-    ws("*1* kl"); wi(kl); ws("p.characters");
-    IF p.characters = NIL THEN ws("<NIL>") ELSE ws(p.characters^) END;
-    ws("ml"); wi(ml); wsl(".");
-    *)
-
-    (* Scan the mismatch list at this level as necessary *)
-    IF (ml = 0) & (p.characters # NIL) & (p.mismatch # NIL) THEN
-      StoreInternal(key, offset, target, p.mismatch(Atom));
-      RETURN
-    END;
-
-    IF ml > 0 THEN
-      pl := ContentLength(p.characters);
-      IF ml < pl THEN(* Split Prefix node into two *)
-        (*ws("Split"); wi(pl); ws("character prefix at"); wi(ml); wl;*)
+  kl := ContentLength(key) - offset;
+  p := NIL;  pl := 0;  ml := 0;
+  IF (a # NIL) & (a IS Prefix) THEN
+    p := a(Prefix);  pl := ContentLength(p.characters)
+  END;
+  IF p = NIL THEN
+    NEW(p); p.next := target; p.mismatch := NIL;
+    p.characters := MakeCharBuf(key^, offset, kl);
+    IF a = NIL THEN a := p
+    ELSE NEW(q); q.characters := NIL; q.next := a; q.mismatch := p; a := q;
+    END
+  ELSIF (pl = 0) & (kl = 0) THEN
+    StoreInternal(key, offset, target, p.next)
+  ELSE
+    ml := MatchString(key^, offset, p.characters);
+    IF ml = 0 THEN
+      StoreInternal(key, offset, target, p.mismatch)
+    ELSE
+      IF ml < pl THEN
+        (* Split prefix into two parts and try again at second part *)
         NEW(q); q.characters := MakeCharBuf(p.characters^, ml, pl-ml);
         p.characters := MakeCharBuf(p.characters^, 0, ml);
         q.mismatch := NIL; q.next := p.next;
         p.next := q;
       END;
-      StoreInternal(key, offset+ml, target, a.next);
-      RETURN
-    END;
-
-    Assert(ml = 0, "ml # 0");
+      StoreInternal(key, offset+ml, target, p.next)
+    END
   END;
-
-  (* Should only reach here at end of matching part.
-     By design we've reached the end of the key, or then end of a prefix match
-  *)
-
-  IF a = NIL THEN a := NewSuffix(key, offset, target); RETURN END;
-
-  IF ~(a IS Prefix) THEN
-    IF kl = 0 THEN
-      a := target (* Replace target *)
-    ELSE
-      a := NewSuffix(NIL, 0, a);
-      a(Prefix).mismatch := NewSuffix(key, offset, target);
-    END;
-    RETURN
-  END;
-
-  (* By design a is a Prefix with zero matching length *)
-
-  Assert(ml=0, "ml#0");  Assert(a IS Prefix, "a not Prefix");
-  IF kl = 0 THEN
-    p := a(Prefix);
-    IF p.characters = NIL THEN
-      p.next := target
-    ELSE
-      NEW(q); q.characters := NIL; q.next := target;
-      q.mismatch := p.mismatch; p.mismatch := q;
-    END;
-    RETURN
-  END;
-
-  p := a(Prefix);
-  (*
-  IF (p # NIL) & (p.mismatch # NIL) THEN
-    ws("p.characters"); IF p.characters = NIL THEN ws("<NIL>") ELSE ws(p.characters^) END;
-    wnb; ws(", p.mismatch.characters");
-    IF p.mismatch(Prefix).characters = NIL THEN ws("<NIL>") ELSE ws(p.mismatch(Prefix).characters^) END;
-    wl;
-  END;
-  *)
-  q := NewSuffix(key, offset, target);
-  q.mismatch := p.mismatch;
-  p.mismatch := q
 END StoreInternal;
-
-
-
-
-
-
-
-
 
 PROCEDURE Store*(key: CharBuf; target: Atom);
 VAR a: Atom;
@@ -261,12 +163,19 @@ BEGIN  NEW(n);  n.next := NIL;  n.n := i;  RETURN n
 END MakeNumber;
 
 PROCEDURE DumpPrefixTree(p: Prefix; depth: LONGINT);
-VAR i: LONGINT;
+CONST verbose = FALSE;
+VAR i, indent: LONGINT;
 BEGIN
-  ws("'"); wnb; IF p.characters # NIL THEN Out.String(p.characters^); wnb END;
-  ws("' "); wnb;
+  IF verbose THEN
+    ws("'"); wnb; IF p.characters # NIL THEN Out.String(p.characters^); wnb END;
+    ws("' "); wnb;
+    indent := depth + ContentLength(p.characters) + 3;
+  ELSE
+    IF p.characters = NIL THEN Out.String("''") ELSE Out.String(p.characters^) END;
+    indent := depth + ContentLength(p.characters);
+  END;
   IF    p.next = NIL     THEN Out.Ln
-  ELSIF p.next IS Prefix THEN DumpPrefixTree(p.next(Prefix), depth + ContentLength(p.characters)+3)
+  ELSIF p.next IS Prefix THEN DumpPrefixTree(p.next(Prefix), indent)
   ELSE  Out.String(" -> "); Out.Int(p.next(Number).n,1); Out.Ln
   END;
   IF p.mismatch # NIL THEN
@@ -274,6 +183,28 @@ BEGIN
     DumpPrefixTree(p.mismatch(Prefix), depth)
   END
 END DumpPrefixTree;
+
+
+PROCEDURE PrintKeysInternal(p: Prefix; VAR leadin: ARRAY OF CHAR);
+VAR i: INTEGER; localLeadin: ARRAY 200 OF CHAR;
+BEGIN
+  localLeadin := leadin;
+  IF p.characters # NIL THEN Strings.Append(p.characters^, localLeadin) END;
+
+  IF    p.next = NIL     THEN wsl(localLeadin)
+  ELSIF p.next IS Prefix THEN PrintKeysInternal(p.next(Prefix), localLeadin)
+  ELSE  wsl(localLeadin);
+  END;
+
+  IF p.mismatch # NIL THEN
+    PrintKeysInternal(p.mismatch(Prefix), leadin)
+  END
+END PrintKeysInternal;
+
+PROCEDURE PrintKeys;
+VAR leadin: ARRAY 200 OF CHAR;
+BEGIN leadin := ""; PrintKeysInternal(Names, leadin)
+END PrintKeys;
 
 
 PROCEDURE TestLookup(s: ARRAY OF CHAR);
@@ -294,6 +225,27 @@ BEGIN
   Out.String("  "); DumpPrefixTree(Names, 2);
   TestLookup(s)
 END TestAddLookup;
+
+PROCEDURE TestFileLoad;
+VAR f: Files.File; r: Files.Rider; line: ARRAY 200 OF CHAR;
+    i, l: INTEGER; cb: CharBuf;
+BEGIN
+  f := Files.Old("strings"); i := 0;
+  IF f # NIL THEN
+    Files.Set(r, f, 0);
+    WHILE ~r.eof DO
+      Files.ReadLine(r, line); l := Strings.Length(line);
+      WHILE (l>0) & (line[l-1]=' ') DO DEC(l) END;
+      IF l > 0 THEN
+        (*ws("Adding:"); wsl(line);*)
+        cb := MakeCharBuf(line, 0, l);  Store(cb, MakeNumber(i));  INC(i);
+      END
+    END
+  END;
+  wi(i); wsl("strings loaded:");
+  (*DumpPrefixTree(Names, 0);*)
+  PrintKeys
+END TestFileLoad;
 
 BEGIN
   Abort := FALSE;  Break := TRUE;  SOL := TRUE;
@@ -338,4 +290,6 @@ BEGIN
   TestLookup("Salaam");
   TestLookup("Greetings");
   TestLookup("Hello");
+
+  TestFileLoad;
 END PrefixMap.
