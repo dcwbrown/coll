@@ -97,41 +97,53 @@ BEGIN
 END NewSuffix;
 
 
+
 PROCEDURE AddInternal(key: CharBuf; offset: LONGINT; target: Atom; VAR a: Atom);
 VAR kl, pl, ml: LONGINT; p, q: Prefix;
 BEGIN
   kl := ContentLength(key) - offset;
-  IF a = NIL THEN
-    a := NewSuffix(key^, offset, target)
-  ELSIF ~(a IS Prefix) THEN
-    p := NewSuffix(key^, offset, target);
-    NEW(q); q.characters := NIL; q.next := a; q.mismatch := p;
-    a := q;
-  ELSE
-    p := a(Prefix);
-    pl := ContentLength(p.characters);
-    IF pl = 0 THEN (* Special case of empty prefix at end of key *)
-      IF offset = ContentLength(key) THEN
-        AddInternal(key, offset, target, p.next)
-      ELSE
-        AddInternal(key, offset, target, p.mismatch)
+  IF kl = 0 THEN (* Whole key has matched already *)
+    IF (a = NIL) OR ~(a IS Prefix) THEN a := target (* Replace any existing target *)
+    ELSE (* a is a Prefix beyond the key being added *)
+      p := a(Prefix);
+      IF p.characters = NIL THEN (* Skip empty Prefix. By design a.next must point to previous target *)
+        AddInternal(key, offset, target, a.next) (* This will replace the previous target *)
+      ELSE (* Look for or add an empty prefix *)
+        IF p.mismatch # NIL THEN (* keep looking for an empty prefix *)
+          AddInternal(key, offset, target, p.mismatch)
+        ELSE  (* Add an empty prefix *)
+          p.mismatch := NewSuffix(key^, offset, target); (* Create prefix with no characters *)
+        END
       END
+    END
+  ELSE (* There is more key to match *)
+    IF a = NIL THEN (* Simply add the remainder oif the key here *)
+      a := NewSuffix(key^, offset, target)
+    ELSIF ~(a IS Prefix) THEN
+      a := NewSuffix(key^, ContentLength(key), a); (* Insert empty prefix *)
+      AddInternal(key, offset, target, a(Prefix).mismatch)
     ELSE
+      (* See how much of this Prefix matches the remainder of the key *)
+      p := a(Prefix);  pl := ContentLength(p.characters);
       ml := MatchString(key^, offset, p.characters);
-      IF ml = pl THEN (* all this prefix part matches current position in key *)
-        AddInternal(key, offset+ml, target, p.next)
-      ELSIF ml > 0 THEN (* some of this prefix part matches current position in key *)
-        (* Split prefix into two parts and try again at second part *)
-        NEW(q); q.characters := MakeCharBuf(p.characters^, ml, pl-ml);
-        p.characters := MakeCharBuf(p.characters^, 0, ml);
-        q.mismatch := NIL; q.next := p.next;
-        p.next := q; AddInternal(key, offset+ml, target, p.next)
-      ELSE (* none of this prefix part matches current position in key *)
+      IF ml = 0 THEN (* Doesn't match at all, follow the mismatch pointer *)
         AddInternal(key, offset, target, p.mismatch)
+      ELSIF ml < pl THEN (* Split prefix at point where match reaches *)
+        NEW(q); q.characters := MakeCharBuf(p.characters^, ml, pl-ml);
+        q.mismatch := NIL; q.next := p.next;
+        p.characters := MakeCharBuf(p.characters^, 0, ml);
+        p.next := q;
+        AddInternal(key, offset+ml, target, p.next)
+      ELSE (* key matches prefix *)
+        AddInternal(key, offset+pl, target, p.next)
       END
     END
   END
 END AddInternal;
+
+
+
+
 
 
 PROCEDURE Add*(key: CharBuf; target: Atom);
@@ -154,7 +166,7 @@ PROCEDURE DumpPrefixTree(p: Prefix; depth: LONGINT);
 VAR i: LONGINT;
 BEGIN
   IF p.characters = NIL THEN Out.String("''") ELSE Out.String(p.characters^) END;
-  IF    p.next = NIL     THEN Out.Ln
+  IF    p.next = NIL     THEN Out.String(" -> NIL"); Out.Ln
   ELSIF p.next IS Prefix THEN DumpPrefixTree(p.next(Prefix), depth + ContentLength(p.characters))
   ELSE  Out.String(" -> "); Out.Int(p.next(Number).n,1); Out.Ln
   END;
