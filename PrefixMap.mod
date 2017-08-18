@@ -30,17 +30,41 @@ VAR
 
 (* ---------------------------- Console output ---------------------------- *)
 
-  Break:       BOOLEAN;
-  SOL:         BOOLEAN;  (* At start of line *)
+  ChClass: INTEGER; (* 0 letter, 1 non-letter, 2 eol *)
 
-PROCEDURE wb;                    BEGIN Break := TRUE; SOL := FALSE                   END wb;
-PROCEDURE wnb;                   BEGIN Break := FALSE                                END wnb;
-PROCEDURE wc(c: CHAR);           BEGIN Out.Char(c); wnb                              END wc;
-PROCEDURE ws(s: ARRAY OF CHAR);  BEGIN IF Break THEN wc(' ') END; Out.String(s); wb  END ws;
-PROCEDURE wl;                    BEGIN Out.Ln; wnb; SOL := TRUE                      END wl;
-PROCEDURE wlc;                   BEGIN IF ~SOL THEN wl END                           END wlc;
-PROCEDURE wsl(s: ARRAY OF CHAR); BEGIN ws(s); wl                                     END wsl;
-PROCEDURE wi (i: LONGINT);       BEGIN IF Break THEN wc(' ') END; Out.Int(i,1); wb   END wi;
+PROCEDURE Classify(ch: CHAR): INTEGER;
+BEGIN
+  CASE ch OF
+    'a'..'z', 'A'..'Z', '0'..'9':      RETURN 0 (* Space may be required required before and after*)
+  | ',', '.', ';', ':', '}', ']', ')': RETURN 1 (* No space needed before, space may be required after *)
+  | 0DX, 0AX:                          RETURN 3 (* End of line *)
+  ELSE                                 RETURN 2 (* No space needed before or after *)
+  END
+END Classify;
+
+PROCEDURE wbreak(c1, c2: INTEGER); BEGIN
+  CASE c1 OF
+    0: IF c2 > 0 THEN RETURN END
+  | 1: IF c2 > 1 THEN RETURN END
+  ELSE RETURN
+  END;
+  Out.Char(' ')
+END wbreak;
+
+PROCEDURE wnb; BEGIN ChClass := 2 END wnb;
+
+PROCEDURE ws(s: ARRAY OF CHAR);
+VAR l: INTEGER;
+BEGIN
+  l := Strings.Length(s);
+  IF l > 0 THEN wbreak(ChClass, Classify(s[0])); Out.String(s); ChClass := Classify(s[l-1]) END
+END ws;
+
+PROCEDURE wc(c: CHAR);           BEGIN Out.Char(c); ChClass := 2                END wc;
+PROCEDURE wl;                    BEGIN Out.Ln; ChClass := 3                     END wl;
+PROCEDURE wlc;                   BEGIN IF ChClass < 3 THEN wl END               END wlc;
+PROCEDURE wsl(s: ARRAY OF CHAR); BEGIN ws(s); wl                                END wsl;
+PROCEDURE wi (i: LONGINT); BEGIN wbreak(ChClass, 0); Out.Int(i,1); ChClass := 1 END wi;
 
 PROCEDURE Fail(msg: ARRAY OF CHAR);
 BEGIN wlc; ws("Internal error:"); wsl(msg); HALT(99)
@@ -59,7 +83,7 @@ END Error;
 
 
 
-PROCEDURE MakeCharBuf(source: ARRAY OF CHAR; offset, length: LONGINT): CharBuf;
+PROCEDURE MakeCharBuf(VAR source: ARRAY OF CHAR; offset, length: LONGINT): CharBuf;
 VAR cb: CharBuf; i, sourceLength: LONGINT;
 BEGIN
   sourceLength := Strings.Length(source);
@@ -77,15 +101,14 @@ BEGIN IF cb = NIL THEN RETURN 0 ELSE RETURN LEN(cb^)-1 END (* Don't include zero
 END ContentLength;
 
 
-PROCEDURE Min(a, b: LONGINT): LONGINT;
-BEGIN IF a < b THEN RETURN a ELSE RETURN b END
-END Min;
-
 (* Returns how many characters in str match characters from source starting at offset *)
-PROCEDURE MatchString(VAR source: ARRAY OF CHAR; offset: LONGINT; str: CharBuf): INTEGER;
-VAR i: INTEGER; limit: LONGINT;
+PROCEDURE MatchString(source: CharBuf; offset: LONGINT; str: CharBuf): INTEGER;
+VAR i: INTEGER; limit, sourceLength: LONGINT;
 BEGIN
-  limit := Min(ContentLength(str), LEN(source)-1 - offset);
+  sourceLength := ContentLength(source);
+  limit := ContentLength(str);
+  IF (offset >= sourceLength) OR (limit <= 0) THEN RETURN 0 END;
+  IF sourceLength-offset < limit THEN limit := sourceLength-offset END;
   i := 0; WHILE (i < limit) & (source[i+offset] = str[i]) DO INC(i) END;
   RETURN i
 END MatchString;
@@ -98,7 +121,7 @@ BEGIN
   WHILE (a # NIL) & (a IS Prefix) DO
     p := a(Prefix);
     pl := ContentLength(p.characters);
-    ml := MatchString(key^, offset, p.characters);
+    ml := MatchString(key, offset, p.characters);
     IF ml > 0 THEN (* some or all of this prefix part matches current position in key *)
       INC(offset, ml); a := p.next;
     ELSE (* none of this prefix part matches current position in key *)
@@ -116,8 +139,7 @@ END Find;
 PROCEDURE StoreInternal(key: CharBuf; offset: LONGINT; target: Atom; VAR a: Atom);
 VAR kl, pl, ml: LONGINT; p, q: Prefix;
 BEGIN
-  kl := ContentLength(key) - offset;
-  p := NIL;  pl := 0;  ml := 0;
+  kl := ContentLength(key) - offset;  p := NIL;  pl := 0;  ml := 0;
   IF (a # NIL) & (a IS Prefix) THEN
     p := a(Prefix);  pl := ContentLength(p.characters)
   END;
@@ -130,7 +152,7 @@ BEGIN
   ELSIF (pl = 0) & (kl = 0) THEN
     StoreInternal(key, offset, target, p.next)
   ELSE
-    ml := MatchString(key^, offset, p.characters);
+    ml := MatchString(key, offset, p.characters);
     IF ml = 0 THEN
       StoreInternal(key, offset, target, p.mismatch)
     ELSE
@@ -248,7 +270,8 @@ BEGIN
 END TestFileLoad;
 
 BEGIN
-  Abort := FALSE;  Break := TRUE;  SOL := TRUE;
+  Abort := FALSE;  ChClass := 3;
+  (*
   TestAddLookup("Hello",     1);
   TestAddLookup("Greetings", 2);
   TestAddLookup("Salaam",    3);
@@ -290,6 +313,6 @@ BEGIN
   TestLookup("Salaam");
   TestLookup("Greetings");
   TestLookup("Hello");
-
+  *)
   TestFileLoad;
 END PrefixMap.
