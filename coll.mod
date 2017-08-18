@@ -8,8 +8,59 @@
       Function definition
 *)
 
+(* Strings represented by Chars vs Structures
 
-MODULE cob;
+   Chars are used
+    . for independent text strings in the implementation independent of the client program
+    . as a representation of program text that has not been compiled yet.
+
+    Structures are used
+     . to contain both uncompiled strings and source text. Only '[', ']' are interpreted.
+     . to contain compiled porgrams
+
+    When a structure is compiled, it's top level strings are parsed into intrinsics,
+    numbers and functions. Only the top level is compiled, nested structures remain
+    uncompiled until the compiled top level triggers compilation of the top level of
+    a nested structure.
+
+   For example
+
+     1 2 + 3 4 + * [this substring]
+     ^------------^^^------------^^
+         |         |       |      +-- End of (sub) structure
+         |         |       +--------- Chars
+         |         +----------------- (sub) structure
+         +----------------------------Chars
+
+     As this is not yet compiled, the whole thing represents a string which can be
+     manipulated by string functions.
+
+     After compilation it will look like this
+
+     1 2 + 3 4 + * [this substring]
+     ^ ^   ^ ^                      -- Numbers
+         ^     ^ ^                  -- intrinsic operations
+                   ^^^------------^^
+                   |       |      +-- End of (sub) structure
+                   |       +--------- Chars
+                   +----------------- (sub) structure
+
+
+   Compilation is also lazy: When executing (aka evaluating) a structure, strings
+   are compiled only as they are encountered: the string is replaced by the
+   sequence of intrinsics, numbers and functions that it compiles to.
+
+   Hmm, that still needs a flag to distinguish compiled and uncompiled structures.
+
+   OK, change of approach. Don't parse strings into structures at all.
+   When encountering '[' in source, record the content to the next matching ']' as
+   a string.
+
+   When evaluation encounters a string, at that point compile.
+
+ *)
+
+MODULE coll;
 
 IMPORT In, Out, Strings;
 
@@ -360,6 +411,14 @@ END ParseProgram;
 
 (* ----------------------- Compiler and interpreter ----------------------- *)
 
+(* Compile
+   Takes a character buffer and parses into
+     -  numbers
+     -  intrinsics
+     -  function calls
+     -  nested structures (which are not compiled - they remain as characters)
+*)
+
 PROCEDURE Compile(q: Structure): Atom;
 VAR  f, a, t: Atom;
 BEGIN
@@ -391,7 +450,7 @@ BEGIN
   UNTIL Exit;
 END Interpreter;
 
-BEGIN Out.String("Cob."); Out.Ln;
+BEGIN Out.String("coll."); Out.Ln;
   Abort      := FALSE;
   Exit       := FALSE;
   Break      := FALSE;
@@ -407,4 +466,4 @@ BEGIN Out.String("Cob."); Out.Ln;
   AddLookup(MakeString("functions"), MakeIntrinsic(7));
   AddLookup(MakeString("do"),        MakeIntrinsic(8));
   Interpreter;
-END cob.
+END coll.
