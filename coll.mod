@@ -1,3 +1,5 @@
+(* Coll - Concatenative language with lazy lists *)
+
 (* Aspirations:
       Evaluated nested Structures
       Support print [xxx]
@@ -146,7 +148,7 @@ VAR n: Number; s: Chars; i: Intrinsic; q: Structure;
 BEGIN
   WITH
     a: Number    DO NEW(n); n.next := NIL; n.n := a.n; RETURN n
-  | a: Chars    DO NEW(s); s.next := NIL; s.c := a.c; RETURN s
+  | a: Chars     DO NEW(s); s.next := NIL; s.c := a.c; RETURN s
   | a: Intrinsic DO NEW(i); i.next := NIL; i.i := a.i; RETURN i
   | a: Structure DO NEW(q); q.next := NIL; q.a := a.a; RETURN q
   ELSE
