@@ -7,10 +7,12 @@ TYPE
 CharBuf = POINTER TO ARRAY OF CHAR;
 
 Atom   = POINTER TO AtomDesc; AtomDesc = RECORD next: Atom END;
-Number = POINTER TO RECORD (AtomDesc) n: INTEGER END; (* n is the numeric value *)
-Chars  = POINTER TO RECORD (AtomDesc) c: CharBuf END;
+Number = POINTER TO RECORD (AtomDesc) value: INTEGER END; (* value is the numeric value *)
+Chars  = POINTER TO RECORD (AtomDesc) text:  CharBuf END;
 Fork   = POINTER TO RECORD (AtomDesc) other: Atom END;
 
+
+Rover = RECORD a: Atom; o: LONGINT END;
 
 
 VAR
@@ -75,8 +77,8 @@ PROCEDURE WriteAtom(a: Atom);
 BEGIN
   IF a = NIL THEN ws("NIL")
   ELSE WITH
-    a: Number    DO ws("N:"); wnb; wi(a.n); ws(".");
-  | a: Chars     DO ws("C:"); wnb; wc('"'); ws(a.c^); wc('"'); ws(".");
+    a: Number    DO ws("N:"); wnb; wi(a.value); ws(".");
+  | a: Chars     DO ws("C:"); wnb; wc('"'); ws(a.text^); wc('"'); ws(".");
   | a: Fork     DO ws("Fork.")
   ELSE wsl("Unrecognised")
   END END;
@@ -106,6 +108,14 @@ PROCEDURE ContentLength(cb: CharBuf): LONGINT;
 BEGIN IF cb = NIL THEN RETURN 0 ELSE RETURN LEN(cb^)-1 END (* Don't include zero terminator in length *)
 END ContentLength;
 
+PROCEDURE MakeString(c: ARRAY OF CHAR): Chars;
+VAR s: Chars;
+BEGIN
+  NEW(s); s.next := NIL;
+  NEW(s.text, Strings.Length(c)+1);  COPY(c, s.text^);
+  RETURN s
+END MakeString;
+
 
 (* Returns how many characters in str match characters from source starting at offset *)
 PROCEDURE MatchString(source: CharBuf; offset: LONGINT; str: CharBuf): INTEGER;
@@ -131,8 +141,8 @@ BEGIN
       result := FindInternal(key, offset, root.next);
       IF result = NIL THEN result := FindInternal(key, offset, root(Fork).other) END
     ELSIF root IS Chars THEN
-      matchLength := MatchString(key, offset, root(Chars).c);
-      IF matchLength = ContentLength(root(Chars).c) THEN
+      matchLength := MatchString(key, offset, root(Chars).text);
+      IF matchLength = ContentLength(root(Chars).text) THEN
         result := FindInternal(key, offset+matchLength, root.next)
       END
     END
@@ -144,6 +154,71 @@ PROCEDURE Find*(key: CharBuf; root: Atom): Atom;
 BEGIN RETURN FindInternal(key, 0, root)
 END Find;
 
+
+PROCEDURE MatchRover(r1: Rover; VAR r2: Rover): BOOLEAN;
+(* Returns whether the current character or atom in r1 and r2 match.
+   If r2.a is a Fork, then both sides of the fork are tested (recusively) and
+   if a maatch is found then r2 is advanced to the macth.
+   Notes - does not (currently) support r1 being a Fork. *)
+VAR n2: Rover;
+BEGIN
+  IF (r1.a = NIL) OR (r2.a = NIL) THEN RETURN FALSE END;
+
+  Assert(~(r1.a IS Fork), "MatchRover does not support forks in r1.");
+
+  IF    r2.a IS Chars  THEN  RETURN (r1.a IS Chars)  & (r1.a(Chars).text[r1.o] = r2.a(Chars).text[r2.o])
+  ELSIF r2.a IS Number THEN  RETURN (r1.a IS Number) & (r1.a(Number).value     = r2.a(Number).value)
+  ELSIF r2.a IS Fork   THEN
+    n2.o := 0;
+    n2.a := r2.a.next;
+    IF MatchRover(r1, n2) THEN  r2 := n2;  RETURN TRUE;
+    ELSE
+      n2.a := r2.a(Fork).other;
+      IF MatchRover(r1, n2) THEN  r2 := n2;  RETURN TRUE;
+      END
+    END
+  END;
+
+  RETURN FALSE
+END MatchRover;
+
+PROCEDURE AdvanceRover(VAR r: Rover);
+BEGIN
+  ASSERT((r.a IS Chars) OR (r.a IS Number));
+  IF (r.a IS Chars) & (r.o < ContentLength(r.a(Chars).text)-1) THEN
+    INC(r.o)
+  ELSE
+    r.a := r.a.next;  r.o := 0
+  END
+END AdvanceRover;
+
+
+PROCEDURE MatchAtoms(VAR r1, r2: Rover): BOOLEAN;
+(*  Scans r1 and r2 forward whilst a match is achievable.
+**
+**  On exit rovers r1 and r2 point to the last matching atom. If this is a chars
+**  then r1.o and r2.o provide the offset into the respective chars of the last
+**  matching character.
+**
+**  Returns FALSE if the initial positions don't match.
+*)
+VAR n1, n2: Rover;
+BEGIN
+  IF MatchRover(r1, r2) THEN
+    n1 := r1; AdvanceRover(n1);
+    n2 := r2; AdvanceRover(n2);
+    WHILE MatchRover(n1, n2) DO
+      r1 := n1; r2 := n2;
+      AdvanceRover(n1); AdvanceRover(n2)
+    END;
+    RETURN TRUE
+  ELSE
+    RETURN FALSE
+  END
+END MatchAtoms;
+
+
+
 PROCEDURE InsertSplit(key: CharBuf; offset: LONGINT; target: Atom; VAR a: Atom);
 VAR suffix: Atom; c: Chars; s: Fork; keyLength: LONGINT;
 BEGIN
@@ -151,7 +226,7 @@ BEGIN
   keyLength := ContentLength(key);
   IF offset < keyLength THEN
     NEW(c);  suffix := c;
-    c.c := MakeCharBuf(key^, offset, keyLength-offset);  c.next := target
+    c.text := MakeCharBuf(key^, offset, keyLength-offset);  c.next := target
   ELSE
     suffix := target;
   END;
@@ -185,15 +260,15 @@ BEGIN
     END;
     RETURN TRUE
   ELSIF current IS Chars THEN
-    matchLength := MatchString(key, offset, current(Chars).c);
-    curLength := ContentLength(current(Chars).c);
+    matchLength := MatchString(key, offset, current(Chars).text);
+    curLength := ContentLength(current(Chars).text);
     (*ws("Chars: matchLength"); wi(matchLength); ws(", curLength"); wi(curLength); wl;*)
     IF matchLength = 0 THEN
       RETURN FALSE
     ELSE
       IF matchLength < curLength THEN (* Fork this node *)
-        NEW(c); c.next := current.next; c.c := MakeCharBuf(current(Chars).c^, matchLength, curLength-matchLength);
-        current(Chars).next := c; current(Chars).c := MakeCharBuf(current(Chars).c^, 0, matchLength);
+        NEW(c); c.next := current.next; c.text := MakeCharBuf(current(Chars).text^, matchLength, curLength-matchLength);
+        current(Chars).next := c; current(Chars).text := MakeCharBuf(current(Chars).text^, 0, matchLength);
         InsertSplit(key, offset+matchLength, target, current.next);
         RETURN TRUE
       ELSE
@@ -218,7 +293,7 @@ END Store;
 
 PROCEDURE MakeNumber(i: INTEGER): Number;
 VAR n: Number;
-BEGIN  NEW(n);  n.next := NIL;  n.n := i;  RETURN n
+BEGIN  NEW(n);  n.next := NIL;  n.value := i;  RETURN n
 END MakeNumber;
 
 PROCEDURE WritePrefixTree(p: Atom; indent: LONGINT);
@@ -226,8 +301,8 @@ VAR i: LONGINT;
 BEGIN
   IF p # NIL THEN
     IF p IS Chars THEN
-      ws(p(Chars).c^); wnb;
-      WritePrefixTree(p.next, indent+ContentLength(p(Chars).c))
+      ws(p(Chars).text^); wnb;
+      WritePrefixTree(p.next, indent+ContentLength(p(Chars).text))
     ELSIF p IS Fork THEN
       WritePrefixTree(p.next, indent); wl;
       FOR i := 0 TO indent-1 DO wc(' ') END;
@@ -246,10 +321,10 @@ BEGIN
   IF p = NIL THEN
     ws("<nil>")
   ELSIF p IS Chars  THEN
-    ws(p(Chars).c^); wnb;
-    DumpPrefixTree(p.next, indent+ContentLength(p(Chars).c))
+    ws(p(Chars).text^); wnb;
+    DumpPrefixTree(p.next, indent+ContentLength(p(Chars).text))
   ELSIF p IS Number THEN
-    ws("#"); wnb; wi(p(Number).n);
+    ws("#"); wnb; wi(p(Number).value);
     DumpPrefixTree(p.next, indent+2)
   ELSIF p IS Fork THEN
     ws("|"); INC(indent); DumpPrefixTree(p.next, indent); wl;
@@ -272,17 +347,22 @@ BEGIN
 END SkipToNumber;
 
 PROCEDURE TestLookup(s: ARRAY OF CHAR);
-VAR cb: CharBuf; a: Atom;
+VAR cb: CharBuf; a: Atom; r1, r2: Rover;
 BEGIN
   cb := MakeCharBuf(s, 0, LEN(s)-1);
   wlc; Out.String("Lookup "); Out.String(s); Out.String(" -> ");
   a := SkipToNumber(Find(cb, Names));
   IF a = NIL THEN Out.String("not found.")
   ELSIF a IS Number THEN
-    Out.Int(a(Number).n,1); Out.Ln;
+    Out.Int(a(Number).value,1); Out.Ln;
   ELSE
     wsl("found non-number:");  ws("  "); DumpPrefixTree(a, 2)
-  END
+  END;
+  wsl("Test MatchAtoms.");
+  r1.a := MakeString(s); r1.o := 0;
+  r2.a := Names; r2.o := 0;
+  IF MatchAtoms(r1, r2) THEN ws("true, r2.o"); wi(r2.o); wsl(", r2.a:"); ws("  "); DumpPrefixTree(r2.a, 2)
+  ELSE wsl("False.") END
 END TestLookup;
 
 PROCEDURE TestAddLookup(s: ARRAY OF CHAR; i: INTEGER);
