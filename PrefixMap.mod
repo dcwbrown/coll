@@ -12,7 +12,10 @@ Chars  = POINTER TO RECORD (AtomDesc) text:  CharBuf END;
 Fork   = POINTER TO RECORD (AtomDesc) other: Atom END;
 
 
-Rover = RECORD a: Atom; o: LONGINT END;
+Rover = RECORD
+          prevAtom: Atom;  prevOffset: LONGINT;
+          currAtom: Atom;  currOffset: LONGINT
+        END;
 
 
 VAR
@@ -104,6 +107,15 @@ BEGIN
   RETURN cb
 END MakeCharBuf;
 
+PROCEDURE MakeChars(c: ARRAY OF CHAR): Chars;
+VAR s: Chars;
+BEGIN
+  NEW(s); s.next := NIL;
+  NEW(s.text, Strings.Length(c)+1);  COPY(c, s.text^);
+  RETURN s
+END MakeChars;
+
+
 PROCEDURE ContentLength(cb: CharBuf): LONGINT;
 BEGIN IF cb = NIL THEN RETURN 0 ELSE RETURN LEN(cb^)-1 END (* Don't include zero terminator in length *)
 END ContentLength;
@@ -130,6 +142,7 @@ BEGIN
 END MatchString;
 
 
+(*
 PROCEDURE FindInternal(key: CharBuf; offset: LONGINT; root: Atom): Atom;
 VAR result: Atom; matchLength: LONGINT;
 BEGIN
@@ -153,27 +166,30 @@ END FindInternal;
 PROCEDURE Find*(key: CharBuf; root: Atom): Atom;
 BEGIN RETURN FindInternal(key, 0, root)
 END Find;
-
+*)
 
 PROCEDURE MatchRover(r1: Rover; VAR r2: Rover): BOOLEAN;
 (* Returns whether the current character or atom in r1 and r2 match.
    If r2.a is a Fork, then both sides of the fork are tested (recusively) and
    if a maatch is found then r2 is advanced to the macth.
-   Notes - does not (currently) support r1 being a Fork. *)
+   Notes - does not (currently) support r1 being a Fork.
+*)
 VAR n2: Rover;
 BEGIN
-  IF (r1.a = NIL) OR (r2.a = NIL) THEN RETURN FALSE END;
+  IF r2.currAtom = NIL THEN RETURN r1.currAtom = NIL END;
 
-  Assert(~(r1.a IS Fork), "MatchRover does not support forks in r1.");
+  IF (r1.currAtom = NIL) & ~(r2.currAtom IS Fork) THEN RETURN FALSE END;
 
-  IF    r2.a IS Chars  THEN  RETURN (r1.a IS Chars)  & (r1.a(Chars).text[r1.o] = r2.a(Chars).text[r2.o])
-  ELSIF r2.a IS Number THEN  RETURN (r1.a IS Number) & (r1.a(Number).value     = r2.a(Number).value)
-  ELSIF r2.a IS Fork   THEN
-    n2.o := 0;
-    n2.a := r2.a.next;
+  Assert((r1.currAtom = NIL) OR ~(r1.currAtom IS Fork), "MatchRover does not support forks in r1.");
+
+  IF    r2.currAtom IS Chars  THEN  RETURN (r1.currAtom IS Chars)  & (r1.currAtom(Chars).text[r1.currOffset] = r2.currAtom(Chars).text[r2.currOffset])
+  ELSIF r2.currAtom IS Number THEN  RETURN (r1.currAtom IS Number) & (r1.currAtom(Number).value              = r2.currAtom(Number).value)
+  ELSIF r2.currAtom IS Fork   THEN
+    n2.prevOffset := n2.currOffset; n2.currOffset := 0;
+    n2.prevAtom   := n2.currAtom;   n2.currAtom   := r2.currAtom.next;
     IF MatchRover(r1, n2) THEN  r2 := n2;  RETURN TRUE;
     ELSE
-      n2.a := r2.a(Fork).other;
+      n2.currAtom := r2.currAtom(Fork).other;
       IF MatchRover(r1, n2) THEN  r2 := n2;  RETURN TRUE;
       END
     END
@@ -184,38 +200,71 @@ END MatchRover;
 
 PROCEDURE AdvanceRover(VAR r: Rover);
 BEGIN
-  ASSERT((r.a IS Chars) OR (r.a IS Number));
-  IF (r.a IS Chars) & (r.o < ContentLength(r.a(Chars).text)-1) THEN
-    INC(r.o)
+  ASSERT((r.currAtom IS Chars) OR (r.currAtom IS Number));
+  IF (r.currAtom IS Chars) & (r.currOffset < ContentLength(r.currAtom(Chars).text)-1) THEN
+    r.prevOffset := r.currOffset;  INC(r.currOffset)
   ELSE
-    r.a := r.a.next;  r.o := 0
+    r.prevAtom := r.currAtom;       r.prevOffset := r.currOffset;
+    r.currAtom := r.currAtom.next;  r.currOffset := 0
   END
 END AdvanceRover;
 
+PROCEDURE SplitChars(VAR r: Rover);
+VAR offset, length: LONGINT;  c: Chars;
+BEGIN
+  Assert((r.currAtom # NIL) & (r.currAtom IS Chars), "SplitChars expected r.currAtom to be Chars");
+  offset := r.currOffset;  length := ContentLength(r.currAtom(Chars).text);
+  Assert(offset > 0, "SpliChars expected current offset to be greater than zero");
+  Assert(offset < length, "SpliChars expected current offset to be less than length");
 
-PROCEDURE MatchAtoms(VAR r1, r2: Rover): BOOLEAN;
+  r.prevAtom := r.currAtom;  r.prevOffset := offset - 1;
+  NEW(c);  c.next := r.currAtom.next;
+  r.prevAtom.next := c;  r.currAtom := c;  r.currOffset := 0;
+
+  r.currAtom(Chars).text := MakeCharBuf(r.prevAtom(Chars).text^, offset, length-offset);
+  r.prevAtom(Chars).text := MakeCharBuf(r.prevAtom(Chars).text^, 0, offset);
+END SplitChars;
+
+PROCEDURE MatchAtoms(add: BOOLEAN; VAR r1, r2: Rover);
 (*  Scans r1 and r2 forward whilst a match is achievable.
 **
-**  On exit rovers r1 and r2 point to the last matching atom. If this is a chars
-**  then r1.o and r2.o provide the offset into the respective chars of the last
-**  matching character.
+**  On exit rovers r1 and r2 point to the first non-matching atom.
+**  If the mismatch is in the middle of a Chars, the corresponding rover's .o
+**  field identifies the exact mismatch positon.
 **
-**  Returns FALSE if the initial positions don't match.
+**  If the add parameter is passed as TRUE and a mismatch occurs befor the
+**  end of r1, then the remainder of r1 is inserted as a fork in r2.
+**
 *)
-VAR n1, n2: Rover;
+VAR f: Fork;
 BEGIN
-  IF MatchRover(r1, r2) THEN
-    n1 := r1; AdvanceRover(n1);
-    n2 := r2; AdvanceRover(n2);
-    WHILE MatchRover(n1, n2) DO
-      r1 := n1; r2 := n2;
-      AdvanceRover(n1); AdvanceRover(n2)
-    END;
-    RETURN TRUE
-  ELSE
-    RETURN FALSE
+  WHILE MatchRover(r1, r2) DO  AdvanceRover(r1);  AdvanceRover(r2)  END;
+  IF add & (r1.currAtom # NIL) THEN (* Insert remainder of r1 as fork in r2 *)
+    IF (r1.currAtom IS Chars) & (r1.currOffset > 0) THEN SplitChars(r1) END;
+    IF r2.currAtom = NIL THEN
+      r2.prevAtom.next := r1.currAtom
+    ELSE
+      IF (r2.currAtom IS Chars) & (r2.currOffset > 0) THEN SplitChars(r2) END;
+      (* Insert fork between p2 and r2, with new content from r1 as the other part *)
+      NEW(f);  f.next := r2.currAtom;  r2.prevAtom.next := f;  f.other := r1.currAtom;
+    END
   END
 END MatchAtoms;
+
+
+PROCEDURE SetRover(a1: Atom; o1: LONGINT; a2: Atom; o2: LONGINT; VAR r: Rover);
+BEGIN  r.prevAtom := a1;  r.prevOffset := o1;  r.currAtom := a2;  r.currOffset := o2;
+END SetRover;
+
+
+PROCEDURE Find*(key: Atom; VAR result: Rover);
+VAR rkey: Rover;
+BEGIN
+  SetRover(NIL, 0, key, 0, rkey);
+  MatchAtoms(FALSE, rkey, result);
+  IF rkey.currAtom # NIL THEN result.currAtom := NIL END
+END Find;
+
 
 
 
@@ -301,7 +350,7 @@ VAR i: LONGINT;
 BEGIN
   IF p # NIL THEN
     IF p IS Chars THEN
-      ws(p(Chars).text^); wnb;
+      IF p(Chars).text # NIL THEN ws(p(Chars).text^); wnb END;
       WritePrefixTree(p.next, indent+ContentLength(p(Chars).text))
     ELSIF p IS Fork THEN
       WritePrefixTree(p.next, indent); wl;
@@ -321,7 +370,7 @@ BEGIN
   IF p = NIL THEN
     ws("<nil>")
   ELSIF p IS Chars  THEN
-    ws(p(Chars).text^); wnb;
+    IF p(Chars).text # NIL THEN ws(p(Chars).text^); wnb END;
     DumpPrefixTree(p.next, indent+ContentLength(p(Chars).text))
   ELSIF p IS Number THEN
     ws("#"); wnb; wi(p(Number).value);
@@ -336,44 +385,77 @@ END DumpPrefixTree;
 PROCEDURE SkipToNumber(a: Atom): Atom;
 VAR b: Atom;
 BEGIN
-  IF (a = NIL) OR ~(a IS Fork) THEN RETURN a
+  IF    a = NIL     THEN RETURN NIL
+  ELSIF a IS Number THEN RETURN a
+  ELSIF a IS Fork   THEN
+    b := SkipToNumber(a(Fork).next);
+    IF b = NIL THEN b := SkipToNumber(a(Fork).other) END;
+    RETURN b
   ELSE
-    b := SkipToNumber(a.next);
-    (*IF (b = NIL) OR ~(b IS Fork) THEN RETURN b*)
-    IF (b = NIL) OR (b IS Number) THEN RETURN b
-    ELSE RETURN SkipToNumber(a(Fork).other)
-    END
+    RETURN NIL
   END
 END SkipToNumber;
 
 PROCEDURE TestLookup(s: ARRAY OF CHAR);
-VAR cb: CharBuf; a: Atom; r1, r2: Rover;
+VAR str: Chars; a: Atom; r1, r2: Rover;
 BEGIN
-  cb := MakeCharBuf(s, 0, LEN(s)-1);
-  wlc; Out.String("Lookup "); Out.String(s); Out.String(" -> ");
-  a := SkipToNumber(Find(cb, Names));
-  IF a = NIL THEN Out.String("not found.")
+  str := MakeChars(s);
+  wlc; ws("Lookup "); ws(s); ws(" -> ");
+  SetRover(Names, 0, Names.next, 0, r1);
+  Find(str, r1);
+  a := SkipToNumber(r1.currAtom);
+  IF a = NIL THEN wsl("not found.")
   ELSIF a IS Number THEN
-    Out.Int(a(Number).value,1); Out.Ln;
+    wi(a(Number).value); wl;
   ELSE
     wsl("found non-number:");  ws("  "); DumpPrefixTree(a, 2)
   END;
-  wsl("Test MatchAtoms.");
-  r1.a := MakeString(s); r1.o := 0;
-  r2.a := Names; r2.o := 0;
-  IF MatchAtoms(r1, r2) THEN ws("true, r2.o"); wi(r2.o); wsl(", r2.a:"); ws("  "); DumpPrefixTree(r2.a, 2)
-  ELSE wsl("False.") END
+
+  (*
+  wsl("Test MatchAtoms(FALSE, r1, r2).");
+  SetRover(NIL, 0, MakeString(s), 0, r1);
+  SetRover(Names, 0, Names.next, 0, r2);
+  MatchAtoms(FALSE, r1, r2);
+  ws("  r1.currOffset"); wi(r1.currOffset); wsl(", r1.currAtom:"); ws("    "); DumpPrefixTree(r1.currAtom, 4); wl;
+  ws("  r2.currOffset"); wi(r2.currOffset); wsl(", r2.currAtom:"); ws("    "); DumpPrefixTree(r2.currAtom, 4); wl;
+  *)
 END TestLookup;
 
+(*
 PROCEDURE TestAddLookup(s: ARRAY OF CHAR; i: INTEGER);
 VAR cb: CharBuf; a: Atom;
 BEGIN
   cb := MakeCharBuf(s, 0, LEN(s)-1);
-  Out.String("Adding "); Out.String(s); Out.Char(':'); Out.Ln;
+  ws("Adding "); ws(s); wc(':'); wl;
   Store(cb, MakeNumber(i), Names);
   wsl("Names:"); ws("  "); DumpPrefixTree(Names, 2);
   TestLookup(s)
 END TestAddLookup;
+*)
+
+PROCEDURE TestAddLookup(s: ARRAY OF CHAR; i: INTEGER);
+VAR c: Chars; n: Number;  r1, r2: Rover;
+BEGIN
+  IF Names = NIL THEN (* Create an empty anchoring Chars at the root of the tree *)
+    NEW(c);  c.text := NIL;  c.next := NIL;  Names := c
+  END;
+
+  NEW(c); c.text := MakeCharBuf(s, 0, LEN(s)-1);
+  NEW(n); n.value := i;
+  c.next := n;  n.next := NIL;
+
+  ws("Adding "); ws(s); wc(':'); wl;
+
+
+  SetRover(NIL, 0, c, 0, r1);
+  SetRover(Names, 0, Names.next, 0, r2);
+  MatchAtoms(TRUE, r1, r2);
+
+  wsl("Names:"); ws("  "); DumpPrefixTree(Names, 2);
+
+  TestLookup(s)
+END TestAddLookup;
+
 
 PROCEDURE TestFileLoad;
 VAR f: Files.File; r: Files.Rider; line: ARRAY 200 OF CHAR;
@@ -412,7 +494,7 @@ BEGIN
   TestAddLookup("He",        11);
   TestAddLookup("Henge",     12);
   TestAddLookup("Holder",    13);
-  Out.Ln;
+  wl;
   TestLookup("Hello");
   TestLookup("Greetings");
   TestLookup("Salaam");
@@ -426,7 +508,7 @@ BEGIN
   TestLookup("He");
   TestLookup("Henge");
   TestLookup("Holder");
-  Out.Ln;
+  wl;
   TestLookup("Holder");
   TestLookup("Henge");
   TestLookup("He");
