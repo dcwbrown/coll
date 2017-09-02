@@ -7,15 +7,34 @@ TYPE
 CharBuf = POINTER TO ARRAY OF CHAR;
 
 Atom   = POINTER TO AtomDesc; AtomDesc = RECORD next: Atom END;
-Number = POINTER TO RECORD (AtomDesc) value: INTEGER END; (* value is the numeric value *)
-Chars  = POINTER TO RECORD (AtomDesc) text:  CharBuf END;
+Number = POINTER TO RECORD (AtomDesc) value: LONGINT END; (* value is the numeric value *)
+Text   = POINTER TO RECORD (AtomDesc) text:  CharBuf END;
 Fork   = POINTER TO RECORD (AtomDesc) other: Atom END;
 
 
+
+
+
+
+(*  Rover - describes a pair of adjacent positions
+
+    prev IS Number: next is prev.next
+    prev IS Text:  prev offset is pos, pos+1 implies next position
+    prev IS Fork:   pos = 0 => next is prev.next, pos=1 => next is prev.other
+*)
 Rover = RECORD
-          prevAtom: Atom;  prevOffset: LONGINT;
-          currAtom: Atom;  currOffset: LONGINT
+          prev: Atom;
+          pos:  LONGINT
+          (* stack: Atom - stack of retun continuation points coreesponding to previous Nest atoms *)
         END;
+
+(* Crawler - obsolete overengineered versin of Rover *)
+
+Crawler = RECORD
+            prevAtom: Atom;  prevOffset: LONGINT;
+            currAtom: Atom;  currOffset: LONGINT
+          END;
+
 
 
 VAR
@@ -80,9 +99,9 @@ PROCEDURE WriteAtom(a: Atom);
 BEGIN
   IF a = NIL THEN ws("NIL")
   ELSE WITH
-    a: Number    DO ws("N:"); wnb; wi(a.value); ws(".");
-  | a: Chars     DO ws("C:"); wnb; wc('"'); ws(a.text^); wc('"'); ws(".");
-  | a: Fork     DO ws("Fork.")
+    a: Number DO ws("N-"); wi(a.value); ws(".");
+  | a: Text  DO ws("C-"); wc('"'); ws(a.text^); wc('"'); ws(".");
+  | a: Fork   DO ws("Fork.")
   ELSE wsl("Unrecognised")
   END END;
 END WriteAtom;
@@ -99,137 +118,136 @@ VAR cb: CharBuf; i, sourceLength: LONGINT;
 BEGIN
   sourceLength := Strings.Length(source);
   IF offset + length > sourceLength THEN length := sourceLength - offset END;
+
   IF length <= 0 THEN RETURN NIL END;
 
   NEW(cb, length+1);
   FOR i := 0 TO length-1 DO cb[i] := source[offset+i] END;
   cb[length] := 0X;
-  RETURN cb
-END MakeCharBuf;
+RETURN cb END MakeCharBuf;
 
-PROCEDURE MakeChars(c: ARRAY OF CHAR): Chars;
-VAR s: Chars;
+
+PROCEDURE MakeText(c: ARRAY OF CHAR): Text;
+VAR s: Text;
 BEGIN
   NEW(s); s.next := NIL;
   NEW(s.text, Strings.Length(c)+1);  COPY(c, s.text^);
-  RETURN s
-END MakeChars;
+RETURN s END MakeText;
 
 
 PROCEDURE ContentLength(cb: CharBuf): LONGINT;
 BEGIN IF cb = NIL THEN RETURN 0 ELSE RETURN LEN(cb^)-1 END (* Don't include zero terminator in length *)
 END ContentLength;
 
-PROCEDURE MakeString(c: ARRAY OF CHAR): Chars;
-VAR s: Chars;
+PROCEDURE MakeString(c: ARRAY OF CHAR): Text;
+VAR s: Text;
 BEGIN
   NEW(s); s.next := NIL;
   NEW(s.text, Strings.Length(c)+1);  COPY(c, s.text^);
-  RETURN s
-END MakeString;
+RETURN s END MakeString;
 
 
-(* Returns how many characters in str match characters from source starting at offset *)
-PROCEDURE MatchString(source: CharBuf; offset: LONGINT; str: CharBuf): INTEGER;
-VAR i: INTEGER; limit, sourceLength: LONGINT;
+(* --------------------- Rovers ------------------- *)
+
+PROCEDURE MakeRover(a: Atom; VAR r: Rover);
+BEGIN r.prev := a;  r.pos := 0
+END MakeRover;
+
+
+PROCEDURE NextPos(VAR a: Atom; VAR p: LONGINT);
+VAR al: Atom;
 BEGIN
-  sourceLength := ContentLength(source);
-  limit := ContentLength(str);
-  IF (offset >= sourceLength) OR (limit <= 0) THEN RETURN 0 END;
-  IF sourceLength-offset < limit THEN limit := sourceLength-offset END;
-  i := 0; WHILE (i < limit) & (source[i+offset] = str[i]) DO INC(i) END;
-  RETURN i
-END MatchString;
+  Assert(a # NIL, "NextPos expects non-nil atom");
+  Assert((a IS Number) OR (a IS Text) OR (a IS Fork), "NextPos exptects number, text or fork");
+  al := a;
+  WITH
+    al: Number DO a := a.next; p := 0
+  | al: Text   DO IF p < ContentLength(al.text) THEN INC(p) ELSE a := a.next; p := 0 END
+  | al: Fork   DO IF p = 0 THEN a := a.next ELSE a := al.other END; p := 0
+  END
+END NextPos;
 
-
-(*
-PROCEDURE FindInternal(key: CharBuf; offset: LONGINT; root: Atom): Atom;
-VAR result: Atom; matchLength: LONGINT;
+PROCEDURE MatchRover(VAR r1, r2: Rover): BOOLEAN;
+(* Return whether r1 and r2 are at a matching position *)
+VAR a1, a2: Atom; p1, p2: LONGINT;
 BEGIN
-  result := NIL;
-  IF offset >= ContentLength(key) THEN
-    result := root
-  ELSIF root # NIL THEN
-    IF root IS Fork THEN
-      result := FindInternal(key, offset, root.next);
-      IF result = NIL THEN result := FindInternal(key, offset, root(Fork).other) END
-    ELSIF root IS Chars THEN
-      matchLength := MatchString(key, offset, root(Chars).text);
-      IF matchLength = ContentLength(root(Chars).text) THEN
-        result := FindInternal(key, offset+matchLength, root.next)
-      END
-    END
-  END;
-  RETURN result
-END FindInternal;
+  a1 := r1.prev;  p1 := r1.pos;  NextPos(a1, p1);
+  a2 := r2.prev;  p2 := r2.pos;  NextPos(a2, p2);
+  Assert((a1 IS Text) OR (a1 IS Number), "MatchRover expects r1 to be Text or Number");
+  Assert((a2 IS Text) OR (a2 IS Number), "MatchRover expects r2 to be Text or Number");
+  WITH
+    a1: Number DO RETURN (a2 IS Number) & (a1.value = a2(Number).value)
+  | a1: Text   DO RETURN (a2 IS Text)   & (a1.text[p1] = a2(Text).text[p2])
+  END
+END MatchRover;
 
-PROCEDURE Find*(key: CharBuf; root: Atom): Atom;
-BEGIN RETURN FindInternal(key, 0, root)
-END Find;
-*)
 
-PROCEDURE MatchRover(r1: Rover; VAR r2: Rover): BOOLEAN;
+
+PROCEDURE MatchCrawler(r1: Crawler; VAR r2: Crawler): BOOLEAN;
 (* Returns whether the current character or atom in r1 and r2 match.
    If r2.a is a Fork, then both sides of the fork are tested (recusively) and
    if a maatch is found then r2 is advanced to the macth.
    Notes - does not (currently) support r1 being a Fork.
 *)
-VAR n2: Rover;
+VAR n2: Crawler;
 BEGIN
   IF r2.currAtom = NIL THEN RETURN r1.currAtom = NIL END;
 
   IF (r1.currAtom = NIL) & ~(r2.currAtom IS Fork) THEN RETURN FALSE END;
 
-  Assert((r1.currAtom = NIL) OR ~(r1.currAtom IS Fork), "MatchRover does not support forks in r1.");
+  Assert((r1.currAtom = NIL) OR ~(r1.currAtom IS Fork), "MatchCrawler does not support forks in r1.");
 
-  IF    r2.currAtom IS Chars  THEN  RETURN (r1.currAtom IS Chars)  & (r1.currAtom(Chars).text[r1.currOffset] = r2.currAtom(Chars).text[r2.currOffset])
+  IF    r2.currAtom IS Text  THEN  RETURN (r1.currAtom IS Text)  & (r1.currAtom(Text).text[r1.currOffset] = r2.currAtom(Text).text[r2.currOffset])
   ELSIF r2.currAtom IS Number THEN  RETURN (r1.currAtom IS Number) & (r1.currAtom(Number).value              = r2.currAtom(Number).value)
   ELSIF r2.currAtom IS Fork   THEN
     n2.prevOffset := n2.currOffset; n2.currOffset := 0;
     n2.prevAtom   := n2.currAtom;   n2.currAtom   := r2.currAtom.next;
-    IF MatchRover(r1, n2) THEN  r2 := n2;  RETURN TRUE;
+    IF MatchCrawler(r1, n2) THEN  r2 := n2;  RETURN TRUE;
     ELSE
       n2.currAtom := r2.currAtom(Fork).other;
-      IF MatchRover(r1, n2) THEN  r2 := n2;  RETURN TRUE;
+      IF MatchCrawler(r1, n2) THEN  r2 := n2;  RETURN TRUE;
       END
     END
   END;
 
   RETURN FALSE
-END MatchRover;
+END MatchCrawler;
 
-PROCEDURE AdvanceRover(VAR r: Rover);
+
+PROCEDURE AdvanceCrawler(VAR r: Crawler);
 BEGIN
-  ASSERT((r.currAtom IS Chars) OR (r.currAtom IS Number));
-  IF (r.currAtom IS Chars) & (r.currOffset < ContentLength(r.currAtom(Chars).text)-1) THEN
+  ASSERT((r.currAtom IS Text) OR (r.currAtom IS Number));
+  IF (r.currAtom IS Text) & (r.currOffset < ContentLength(r.currAtom(Text).text)-1) THEN
     r.prevOffset := r.currOffset;  INC(r.currOffset)
   ELSE
     r.prevAtom := r.currAtom;       r.prevOffset := r.currOffset;
     r.currAtom := r.currAtom.next;  r.currOffset := 0
   END
-END AdvanceRover;
+END AdvanceCrawler;
 
-PROCEDURE SplitChars(VAR r: Rover);
-VAR offset, length: LONGINT;  c: Chars;
+
+PROCEDURE SplitChars(VAR r: Crawler);
+VAR offset, length: LONGINT;  c: Text;
 BEGIN
-  Assert((r.currAtom # NIL) & (r.currAtom IS Chars), "SplitChars expected r.currAtom to be Chars");
-  offset := r.currOffset;  length := ContentLength(r.currAtom(Chars).text);
-  Assert(offset > 0, "SpliChars expected current offset to be greater than zero");
-  Assert(offset < length, "SpliChars expected current offset to be less than length");
+  Assert((r.currAtom # NIL) & (r.currAtom IS Text), "SplitChars expected r.currAtom to be Text");
+  offset := r.currOffset;  length := ContentLength(r.currAtom(Text).text);
+  Assert(offset > 0, "SplitChars expected current offset to be greater than zero");
+  Assert(offset < length, "SplitChars expected current offset to be less than length");
 
   r.prevAtom := r.currAtom;  r.prevOffset := offset - 1;
   NEW(c);  c.next := r.currAtom.next;
   r.prevAtom.next := c;  r.currAtom := c;  r.currOffset := 0;
 
-  r.currAtom(Chars).text := MakeCharBuf(r.prevAtom(Chars).text^, offset, length-offset);
-  r.prevAtom(Chars).text := MakeCharBuf(r.prevAtom(Chars).text^, 0, offset);
+  r.currAtom(Text).text := MakeCharBuf(r.prevAtom(Text).text^, offset, length-offset);
+  r.prevAtom(Text).text := MakeCharBuf(r.prevAtom(Text).text^, 0, offset);
 END SplitChars;
 
-PROCEDURE MatchAtoms(add: BOOLEAN; VAR r1, r2: Rover);
+
+PROCEDURE MatchAtoms(add: BOOLEAN; VAR r1, r2: Crawler);
 (*  Scans r1 and r2 forward whilst a match is achievable.
 **
 **  On exit rovers r1 and r2 point to the first non-matching atom.
-**  If the mismatch is in the middle of a Chars, the corresponding rover's .o
+**  If the mismatch is in the middle of a Text, the corresponding Crawler's .o
 **  field identifies the exact mismatch positon.
 **
 **  If the add parameter is passed as TRUE and a mismatch occurs befor the
@@ -238,13 +256,13 @@ PROCEDURE MatchAtoms(add: BOOLEAN; VAR r1, r2: Rover);
 *)
 VAR f: Fork;
 BEGIN
-  WHILE MatchRover(r1, r2) DO  AdvanceRover(r1);  AdvanceRover(r2)  END;
+  WHILE MatchCrawler(r1, r2) DO  AdvanceCrawler(r1);  AdvanceCrawler(r2)  END;
   IF add & (r1.currAtom # NIL) THEN (* Insert remainder of r1 as fork in r2 *)
-    IF (r1.currAtom IS Chars) & (r1.currOffset > 0) THEN SplitChars(r1) END;
+    IF (r1.currAtom IS Text) & (r1.currOffset > 0) THEN SplitChars(r1) END;
     IF r2.currAtom = NIL THEN
       r2.prevAtom.next := r1.currAtom
     ELSE
-      IF (r2.currAtom IS Chars) & (r2.currOffset > 0) THEN SplitChars(r2) END;
+      IF (r2.currAtom IS Text) & (r2.currOffset > 0) THEN SplitChars(r2) END;
       (* Insert fork between p2 and r2, with new content from r1 as the other part *)
       NEW(f);  f.next := r2.currAtom;  r2.prevAtom.next := f;  f.other := r1.currAtom;
     END
@@ -252,87 +270,18 @@ BEGIN
 END MatchAtoms;
 
 
-PROCEDURE SetRover(a1: Atom; o1: LONGINT; a2: Atom; o2: LONGINT; VAR r: Rover);
+PROCEDURE SetCrawler(a1: Atom; o1: LONGINT; a2: Atom; o2: LONGINT; VAR r: Crawler);
 BEGIN  r.prevAtom := a1;  r.prevOffset := o1;  r.currAtom := a2;  r.currOffset := o2;
-END SetRover;
+END SetCrawler;
 
 
-PROCEDURE Find*(key: Atom; VAR result: Rover);
-VAR rkey: Rover;
+PROCEDURE Find*(key: Atom; VAR result: Crawler);
+VAR rkey: Crawler;
 BEGIN
-  SetRover(NIL, 0, key, 0, rkey);
+  SetCrawler(NIL, 0, key, 0, rkey);
   MatchAtoms(FALSE, rkey, result);
   IF rkey.currAtom # NIL THEN result.currAtom := NIL END
 END Find;
-
-
-
-
-PROCEDURE InsertSplit(key: CharBuf; offset: LONGINT; target: Atom; VAR a: Atom);
-VAR suffix: Atom; c: Chars; s: Fork; keyLength: LONGINT;
-BEGIN
-  (*ws("InsertSplit key"); ws(key^); ws(", offset"); wi(offset); ws(", a"); DumpAtom(a);*)
-  keyLength := ContentLength(key);
-  IF offset < keyLength THEN
-    NEW(c);  suffix := c;
-    c.text := MakeCharBuf(key^, offset, keyLength-offset);  c.next := target
-  ELSE
-    suffix := target;
-  END;
-  NEW(s);  s.other := a;  s.next := suffix;  a := s
-END InsertSplit;
-
-PROCEDURE StoreInternal(key: CharBuf; offset: LONGINT; target: Atom; VAR current: Atom): BOOLEAN;
-VAR matchLength: LONGINT; result: BOOLEAN; keyLength, curLength: LONGINT;  c: Chars;
-BEGIN
-  (*ws("StoreInternal key"); ws(key^); ws(", offset"); wi(offset); ws(", current"); DumpAtom(current);*)
-  keyLength := ContentLength(key);
-  IF offset >= keyLength THEN (* Key already exists. Insert target as an alternative *)
-    (*wsl("offset >= keyLength");*)
-    InsertSplit(key, offset, target, current);
-    RETURN TRUE
-  ELSIF current = NIL THEN
-    (*wsl("Nil");*)
-    InsertSplit(key, offset, target, current);
-    RETURN TRUE
-  ELSIF current IS Fork THEN
-    (*wsl("Fork, try next");*)
-    IF ~StoreInternal(key, offset, target, current.next) THEN
-      (*wsl("  next failed, try alternate.");*)
-      IF current(Fork).other # NIL THEN
-        (*wsl("  alternate is non-nil, store here.");*)
-        RETURN StoreInternal(key, offset, target, current(Fork).other)
-      ELSE
-        (*wsl("  alternate is nil, insert Fork here.");*)
-        InsertSplit(key, offset, target, current(Fork).other)
-      END
-    END;
-    RETURN TRUE
-  ELSIF current IS Chars THEN
-    matchLength := MatchString(key, offset, current(Chars).text);
-    curLength := ContentLength(current(Chars).text);
-    (*ws("Chars: matchLength"); wi(matchLength); ws(", curLength"); wi(curLength); wl;*)
-    IF matchLength = 0 THEN
-      RETURN FALSE
-    ELSE
-      IF matchLength < curLength THEN (* Fork this node *)
-        NEW(c); c.next := current.next; c.text := MakeCharBuf(current(Chars).text^, matchLength, curLength-matchLength);
-        current(Chars).next := c; current(Chars).text := MakeCharBuf(current(Chars).text^, 0, matchLength);
-        InsertSplit(key, offset+matchLength, target, current.next);
-        RETURN TRUE
-      ELSE
-        RETURN StoreInternal(key, offset+matchLength, target, current.next)
-      END
-    END
-  ELSE
-    InsertSplit(key, offset, target, current);
-    RETURN TRUE
-  END
-END StoreInternal;
-
-PROCEDURE Store*(key: CharBuf; target: Atom; VAR root: Atom);
-BEGIN ASSERT(StoreInternal(key, 0, target, root))
-END Store;
 
 
 
@@ -349,9 +298,9 @@ PROCEDURE WritePrefixTree(p: Atom; indent: LONGINT);
 VAR i: LONGINT;
 BEGIN
   IF p # NIL THEN
-    IF p IS Chars THEN
-      IF p(Chars).text # NIL THEN ws(p(Chars).text^); wnb END;
-      WritePrefixTree(p.next, indent+ContentLength(p(Chars).text))
+    IF p IS Text THEN
+      IF p(Text).text # NIL THEN ws(p(Text).text^); wnb END;
+      WritePrefixTree(p.next, indent+ContentLength(p(Text).text))
     ELSIF p IS Fork THEN
       WritePrefixTree(p.next, indent); wl;
       FOR i := 0 TO indent-1 DO wc(' ') END;
@@ -369,9 +318,9 @@ VAR i: LONGINT;
 BEGIN
   IF p = NIL THEN
     ws("<nil>")
-  ELSIF p IS Chars  THEN
-    IF p(Chars).text # NIL THEN ws(p(Chars).text^); wnb END;
-    DumpPrefixTree(p.next, indent+ContentLength(p(Chars).text))
+  ELSIF p IS Text  THEN
+    IF p(Text).text # NIL THEN ws(p(Text).text^); wnb END;
+    DumpPrefixTree(p.next, indent+ContentLength(p(Text).text))
   ELSIF p IS Number THEN
     ws("#"); wnb; wi(p(Number).value);
     DumpPrefixTree(p.next, indent+2)
@@ -397,11 +346,11 @@ BEGIN
 END SkipToNumber;
 
 PROCEDURE TestLookup(s: ARRAY OF CHAR);
-VAR str: Chars; a: Atom; r1, r2: Rover;
+VAR str: Text; a: Atom; r1, r2: Crawler;
 BEGIN
-  str := MakeChars(s);
+  str := MakeText(s);
   wlc; ws("Lookup "); ws(s); ws(" -> ");
-  SetRover(Names, 0, Names.next, 0, r1);
+  SetCrawler(Names, 0, Names.next, 0, r1);
   Find(str, r1);
   a := SkipToNumber(r1.currAtom);
   IF a = NIL THEN wsl("not found.")
@@ -410,33 +359,12 @@ BEGIN
   ELSE
     wsl("found non-number:");  ws("  "); DumpPrefixTree(a, 2)
   END;
-
-  (*
-  wsl("Test MatchAtoms(FALSE, r1, r2).");
-  SetRover(NIL, 0, MakeString(s), 0, r1);
-  SetRover(Names, 0, Names.next, 0, r2);
-  MatchAtoms(FALSE, r1, r2);
-  ws("  r1.currOffset"); wi(r1.currOffset); wsl(", r1.currAtom:"); ws("    "); DumpPrefixTree(r1.currAtom, 4); wl;
-  ws("  r2.currOffset"); wi(r2.currOffset); wsl(", r2.currAtom:"); ws("    "); DumpPrefixTree(r2.currAtom, 4); wl;
-  *)
 END TestLookup;
 
-(*
 PROCEDURE TestAddLookup(s: ARRAY OF CHAR; i: INTEGER);
-VAR cb: CharBuf; a: Atom;
+VAR c: Text; n: Number;  r1, r2: Crawler;
 BEGIN
-  cb := MakeCharBuf(s, 0, LEN(s)-1);
-  ws("Adding "); ws(s); wc(':'); wl;
-  Store(cb, MakeNumber(i), Names);
-  wsl("Names:"); ws("  "); DumpPrefixTree(Names, 2);
-  TestLookup(s)
-END TestAddLookup;
-*)
-
-PROCEDURE TestAddLookup(s: ARRAY OF CHAR; i: INTEGER);
-VAR c: Chars; n: Number;  r1, r2: Rover;
-BEGIN
-  IF Names = NIL THEN (* Create an empty anchoring Chars at the root of the tree *)
+  IF Names = NIL THEN (* Create an empty anchoring Text at the root of the tree *)
     NEW(c);  c.text := NIL;  c.next := NIL;  Names := c
   END;
 
@@ -447,16 +375,18 @@ BEGIN
   ws("Adding "); ws(s); wc(':'); wl;
 
 
-  SetRover(NIL, 0, c, 0, r1);
-  SetRover(Names, 0, Names.next, 0, r2);
+  SetCrawler(NIL, 0, c, 0, r1);
+  SetCrawler(Names, 0, Names.next, 0, r2);
   MatchAtoms(TRUE, r1, r2);
 
   wsl("Names:"); ws("  "); DumpPrefixTree(Names, 2);
+  ws(".."); WritePrefixTree(Names, 2);
 
   TestLookup(s)
 END TestAddLookup;
 
 
+(*
 PROCEDURE TestFileLoad;
 VAR f: Files.File; r: Files.Rider; line: ARRAY 200 OF CHAR;
     i, l: INTEGER; cb: CharBuf;
@@ -476,6 +406,7 @@ BEGIN
   wi(i); wsl("strings loaded:");
   DumpPrefixTree(Names, 0);
 END TestFileLoad;
+*)
 
 BEGIN
   Abort := FALSE;  ChClass := 3;  Names := NIL;
