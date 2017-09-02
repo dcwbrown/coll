@@ -3,17 +3,21 @@ MODULE fol; (* FOL - forthishness on lispishness *)
 IMPORT TextWriter, SYSTEM;
 
 CONST
-  (* List element kinds *)
-  Integer   = 0;
-  Character = 1;
-  Fork      = 2;
-  Nest      = 3;
-  Function  = 4;
 
 TYPE
-  Atom = LONGINT;  (* Top 4 bits encode type, remainder depend on type *)
+  (* Atom = LONGINT; *)  (* Top 4 bits encode type, remainder depend on type *)
 
-  List = POINTER TO ListDesc;
+  List           = POINTER TO ListDesc;
+  LinkedListNode = POINTER TO LinkedListNodeDesc;
+  Function       = PROCEDURE();
+
+  Atom = POINTER TO AtomDesc; AtomDesc = RECORD END;
+  IntegerAtom   = POINTER TO IntegerAtomDesc;   IntegerAtomDesc   = RECORD(AtomDesc) int:  LONGINT        END;
+  CharacterAtom = POINTER TO CharacterAtomDesc; CharacterAtomDesc = RECORD(AtomDesc) char: LONGINT        END; (* Unicode code point *)
+  ForkAtom      = POINTER TO ForkAtomDesc;      ForkAtomDesc      = RECORD(AtomDesc) fork: LinkedListNode END;
+  NestAtom      = POINTER TO NestAtomDesc;      NestAtomDesc      = RECORD(AtomDesc) nest: LinkedListNode END;
+  FunctionAtom  = POINTER TO FunctionAtomDesc;  FunctionAtomDesc  = RECORD(AtomDesc) fn:   Function       END;
+
 
   AtomGetter   = PROCEDURE(l: List): Atom;
   Advancer     = PROCEDURE(l: List; i: LONGINT);
@@ -29,15 +33,15 @@ TYPE
 
   ListDesc = RECORD handler: ListHandler END;
 
-  LinkedListNode = RECORD
-    next: LONGINT;
+  LinkedListNodeDesc = RECORD
+    next: LinkedListNode;
     atom: Atom;
   END;
 
   LinkedList     = POINTER TO LinkedListDesc;
   LinkedListDesc = RECORD(ListDesc)
-    first:   LONGINT;
-    curr:    LONGINT
+    first:   LinkedListNode;
+    curr:    LinkedListNode
   END;
 
   ArrayList     = POINTER TO ArrayListDesc;
@@ -57,8 +61,6 @@ TYPE
 VAR
   (*Names: INTEGER;*)  (* Root LinkedListNode of name table *)
   Abort: BOOLEAN;
-  Nodes: ARRAY 10000 OF LinkedListNode;
-  Free:  LONGINT;
 
   LinkedListHandler: ListHandler;
   ArrayListHandler:  ListHandler;
@@ -94,35 +96,9 @@ BEGIN wlc; ws("Error:"); wsl(msg); Abort := TRUE
 END Error;
 
 
-(* -------------------------- Linked list node allocation ------------------- *)
-
-PROCEDURE NewNode(VAR node: LONGINT);
-BEGIN
-  Assert(Free < LEN(Nodes), "No more free nodes.");
-  node := Free;
-  INC(Free)
-END NewNode;
-
-
-(* -------------------------------- Atoms --------------------------------- *)
-
-PROCEDURE MakeAtom(type: LONGINT; value: LONGINT): Atom;
-BEGIN RETURN SYSTEM.LSH(SYSTEM.LSH(value, 4), -4)
-           + SYSTEM.ROT(type MOD 16, -4);
-END MakeAtom;
-
-PROCEDURE ExtractType(v: Atom): INTEGER;
-BEGIN RETURN SYSTEM.VAL(INTEGER, SYSTEM.ROT(v, 4) MOD 16) END ExtractType;
-
-PROCEDURE ExtractValue(v: Atom): LONGINT;
-BEGIN RETURN ASH(SYSTEM.ROT(v, 4), -4) END ExtractValue;
-
-
 (* ---------------------------- Handler shortcuts --------------------------- *)
 
 PROCEDURE GetAtom(l: List): Atom;       BEGIN RETURN l.handler.GetAtom(l)     END GetAtom;
-PROCEDURE GetType(l: List): INTEGER;    BEGIN RETURN ExtractType(GetAtom(l))  END GetType;
-PROCEDURE GetValue(l: List): LONGINT;   BEGIN RETURN ExtractValue(GetAtom(l)) END GetValue;
 PROCEDURE Advance(l: List; o: LONGINT); BEGIN l.handler.Advance(l, o)         END Advance;
 PROCEDURE Rewind(l: List);              BEGIN l.handler.Advance(l, -1)        END Rewind;
 PROCEDURE Ended(l: List): BOOLEAN;      BEGIN RETURN l.handler.Ended(l)       END Ended;
@@ -134,8 +110,8 @@ PROCEDURE GetLength(l: List): LONGINT;  BEGIN RETURN l.handler.GetLength(l)   EN
 PROCEDURE LinkedListAtomGetter(l: List): Atom;
 BEGIN
   Assert(l IS LinkedList, "Expected LinkedList");
-  Assert(l(LinkedList).curr # 0, "Expected non-nil curr in LinkedList");
-  RETURN Nodes[l(LinkedList).curr].atom;
+  Assert(l(LinkedList).curr # NIL, "Expected non-nil curr in LinkedList");
+  RETURN l(LinkedList).curr.atom;
 END LinkedListAtomGetter;
 
 PROCEDURE LinkedListAdvancer(l: List; o: LONGINT);
@@ -146,8 +122,8 @@ BEGIN
     l(LinkedList).curr := l(LinkedList).first
   ELSE
     WHILE o > 0 DO
-      Assert(l(LinkedList).curr # 0, "Expected non-nil curr in LinkedList");
-      l(LinkedList).curr := Nodes[l(LinkedList).curr].next;
+      Assert(l(LinkedList).curr # NIL, "Expected non-nil curr in LinkedList");
+      l(LinkedList).curr := l(LinkedList).curr.next;
       DEC(o)
     END
   END
@@ -156,13 +132,13 @@ END LinkedListAdvancer;
 PROCEDURE LinkedListEndedTest(l: List): BOOLEAN;
 BEGIN
   Assert(l IS LinkedList, "Expected LinkedList");
-  RETURN l(LinkedList).curr = 0
+  RETURN l(LinkedList).curr = NIL
 END LinkedListEndedTest;
 
 PROCEDURE LinkedListLengthGetter(l: List): LONGINT;
-VAR result, p: LONGINT;
+VAR result: LONGINT; p: LinkedListNode;
 BEGIN result := 0;  p := l(LinkedList).first;
-  WHILE p # 0 DO INC(result); p := Nodes[p].next END;
+  WHILE p # NIL DO INC(result); p := p.next END;
 RETURN result END LinkedListLengthGetter;
 
 PROCEDURE MakeEmptyLinkedList(): LinkedList;
@@ -170,21 +146,21 @@ VAR result: LinkedList;
 BEGIN
   NEW(result);
   result.handler := LinkedListHandler;
-  result.first   := 0;
-  result.curr    := 0;
+  result.first   := NIL;
+  result.curr    := NIL;
 RETURN result END MakeEmptyLinkedList;
 
 PROCEDURE LinkedListAddAtom(l: LinkedList; atom: Atom);
-VAR node: LONGINT;
+VAR node: LinkedListNode;
 BEGIN
-  NewNode(node);
-  Nodes[node].atom := atom;
-  Nodes[node].next := 0;
-  IF l.first = 0 THEN l.first := node; l.curr := node
+  NEW(node);
+  node.atom := atom;
+  node.next := NIL;
+  IF l.first = NIL THEN l.first := node; l.curr := node
   ELSE
-    Assert(l.curr # 0, "LinkedListAddAtom expected empty list or list not at end.");
-    Nodes[node].next := Nodes[l.curr].next;
-    Nodes[l.curr].next := node;
+    Assert(l.curr # NIL, "LinkedListAddAtom expected empty list or list not at end.");
+    node.next := l.curr.next;
+    l.curr.next := node;
     l.curr := node
   END;
 END LinkedListAddAtom;
@@ -245,7 +221,7 @@ BEGIN Assert(l IS ListWalker, "Expected ListWalker");
 RETURN GetAtom(l(ListWalker).list) END ListWalkerAtomGetter;
 
 PROCEDURE ListWalkerAdvancer(l: List; o: LONGINT);
-VAR lw: ListWalker; ll: LinkedList;
+VAR lw: ListWalker; ll: LinkedList; a: Atom;
 BEGIN
   Assert(l IS ListWalker, "Expected array list");
   Assert((o > 0) OR (o = -1), "Unexpected offset passed to array list advancer");
@@ -261,16 +237,20 @@ BEGIN
         IF l(ListWalker).parent # NIL THEN
           l(ListWalker)^ := l(ListWalker).parent^; Advance(l(ListWalker).list, 1)
         END
-    ELSIF GetType(l(ListWalker).list) = Nest THEN
-      NEW(lw);
-      lw^ := l(ListWalker)^;
+    ELSE
+      a := GetAtom(l(ListWalker).list);
+      WITH a: NestAtom DO
+        NEW(lw);
+        lw^ := l(ListWalker)^;
 
-      ll := MakeEmptyLinkedList();
-      ll.first := GetValue(l(ListWalker).list);
-      ll.curr := ll.first;
+        ll := MakeEmptyLinkedList();
+        ll.first := a.nest;
+        ll.curr  := ll.first;
 
-      l(ListWalker).list := ll;
-      l(ListWalker).parent := lw;
+        l(ListWalker).list := ll;
+        l(ListWalker).parent := lw
+      ELSE
+      END
     END
   END
 END ListWalkerAdvancer;
@@ -295,24 +275,24 @@ RETURN result END MakeListWalker;
 (* -------------------------------- Utility --------------------------------- *)
 
 PROCEDURE WriteListNode(l: List);
-VAR t: INTEGER; v: LONGINT;
+VAR a: Atom;
 BEGIN
-  t := GetType(l);  v := GetValue(l);
-  (*ws("WriteListNode, t"); wi(t); ws(", v"); wi(v); wl;*)
-  CASE t OF
-    Character: wc(CHR(v))
-  | Integer:   ws("N-"); wi(v); ws(".");
-  | Nest:      ws("<nest>")
-  | Fork:      ws("<fork>")
-  ELSE         ws("<Unrecognised>")
+  a := GetAtom(l);
+  WITH
+    a: CharacterAtom DO wc(CHR(a.char))
+  | a: IntegerAtom   DO ws("N-"); wi(a.int); ws(".")
+  | a: NestAtom      DO ws("<nest>")
+  | a: ForkAtom      DO ws("<fork>")
+  | a: FunctionAtom  DO ws("<function>")
+  ELSE                  ws("<Unrecognised>")
   END
 END WriteListNode;
 
 PROCEDURE MakeText(s: ARRAY OF CHAR): List;
-VAR result: LinkedList;  i, l: LONGINT;
+VAR result: LinkedList;  i, l: LONGINT;  ca: CharacterAtom;
 BEGIN
   result := MakeEmptyLinkedList();  l := sl(s);
-  FOR i := 0 TO l-1 DO LinkedListAddAtom(result, MakeAtom(Character, ORD(s[i]))) END;
+  FOR i := 0 TO l-1 DO NEW(ca); ca.char := ORD(s[i]); LinkedListAddAtom(result, ca) END;
 RETURN result END MakeText;
 
 PROCEDURE WriteList(l: List);
@@ -329,7 +309,7 @@ END WriteList;
 (* -------------------------------- Testing --------------------------------- *)
 
 PROCEDURE Test;
-VAR l1, l2, l3, n1: List;
+VAR l1, l2, l3, n1: List; na: NestAtom;
 BEGIN
   l1 := MakeText("This is a test.");
   WriteList(l1); wl;
@@ -342,7 +322,8 @@ BEGIN
 
   n1 := MakeText(" nested ");
   Rewind(l1); Advance(l1, 9);
-  Nodes[l1(LinkedList).curr].atom := MakeAtom(Nest, n1(LinkedList).first);
+  NEW(na); na.nest := n1(LinkedList).first;
+  l1(LinkedList).curr.atom := na;
 
   WriteList(l1); wl;
 
@@ -355,9 +336,6 @@ END Test;
 
 BEGIN
   Abort := FALSE;
-  Free  := 1;   (* Skip node 0 - it's reserved for nil *)
-  Nodes[0].next := 0;
-  Nodes[0].atom := MakeAtom(-1, -1);
 
   NEW(LinkedListHandler);
   LinkedListHandler.GetAtom   := LinkedListAtomGetter;
