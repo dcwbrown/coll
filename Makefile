@@ -9,7 +9,7 @@ PATH := /d/projects/oberon/vishap/master/install/bin:$(PATH)
 all: fol.exe coll.exe PrefixMap.exe
 
 fol: fol.exe
-	./fol.exe
+	-./fol.exe
 
 coll: coll.exe
 	mintty ./coll.exe
