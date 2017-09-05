@@ -177,7 +177,7 @@ BEGIN
   Assert((a2 IS Text) OR (a2 IS Number), "MatchRover expects r2 to be Text or Number");
   WITH
     a1: Number DO RETURN (a2 IS Number) & (a1.value = a2(Number).value)
-  | a1: Text   DO RETURN (a2 IS Text)   & (a1.text[p1] = a2(Text).text[p2])
+  | a1: Text   DO RETURN (a2 IS Text) & (a1.text[p1] = a2(Text).text[p2])
   END
 END MatchRover;
 

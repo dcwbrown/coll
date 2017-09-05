@@ -65,6 +65,9 @@ VAR
   ArrayListHandler:  ListHandler;
   ListWalkerHandler: ListHandler;
 
+  OpenNestingRepresentationAtom:  CharacterAtom;
+  CloseNestingRepresentationAtom: CharacterAtom;
+
   Stack: LinkedList;
 
 
@@ -120,8 +123,8 @@ BEGIN
   a := GetAtom(l);
   WITH
     a: CharacterAtom DO wc(CHR(a.char))
-  | a: IntegerAtom   DO ws("N("); wi(a.int); ws(")")
-  | a: NestAtom      DO ws("<nest>("); WriteList(a.nest); wc(')');
+  | a: IntegerAtom   DO wi(a.int)
+  | a: NestAtom      DO ws("<nest>") (*ws(".[."); WriteList(a.nest); ws(".].")*)
   | a: ForkAtom      DO ws("<fork>")
   | a: FunctionAtom  DO ws("<function>")
   ELSE                  ws("<Unrecognised>")
@@ -261,32 +264,48 @@ RETURN result END MakeArrayList;
 
 (* ----------------------------- ListWalker -------------------------------- *)
 
-PROCEDURE ResolveNesting(l: ListWalker); (* At nest boundaries steps in or out *)
-VAR a: Atom; lw: ListWalker; eol: BOOLEAN;
+PROCEDURE ListWalkerAtStartOfNest(l: ListWalker): BOOLEAN;
+VAR a: Atom; result: BOOLEAN;
 BEGIN
-  eol := EOL(l.list);  IF ~eol THEN a := GetAtom(l.list) END;
-  WHILE ((~eol) & (a IS NestAtom))
-     OR (eol & (l.parent # NIL)) DO
-    (* At start or end of nesting *)
-    IF ~eol & (a IS NestAtom) THEN (* drop into nesting *)
-      NEW(lw);  lw^ := l^;
-      l.list := a(NestAtom).nest;
-      l.parent := lw
-    ELSE (* exit from nesting *)
-      l^ := l.parent^;
-      Advance(l.list, 1)
-    END;
-    eol := EOL(l.list);  IF ~eol THEN a := GetAtom(l.list) END;
-  END
-END ResolveNesting;
+  result := FALSE;
+  IF ~EOL(l.list) THEN
+    a := GetAtom(l.list);
+    result := a IS NestAtom
+  END;
+RETURN result END ListWalkerAtStartOfNest;
+
+PROCEDURE ListWalkerAtEndOfNest(l: ListWalker): BOOLEAN;
+BEGIN
+RETURN EOL(l.list) & (l.parent # NIL) END ListWalkerAtEndOfNest;
 
 PROCEDURE ListWalkerAtomGetter(l: List): Atom;
+VAR a: Atom;
 BEGIN Assert(l IS ListWalker, "Expected ListWalker");
-  ResolveNesting(l(ListWalker));
-RETURN GetAtom(l(ListWalker).list) END ListWalkerAtomGetter;
+  a := NIL;
+  IF    ListWalkerAtEndOfNest(l(ListWalker))   THEN a := CloseNestingRepresentationAtom
+  ELSIF ListWalkerAtStartOfNest(l(ListWalker)) THEN a := OpenNestingRepresentationAtom
+  ELSE  a := GetAtom(l(ListWalker).list)
+  END;
+RETURN a END ListWalkerAtomGetter;
+
+PROCEDURE AdvanceListWalkerByOne(l: ListWalker);
+VAR lw: ListWalker; a: Atom; eol: BOOLEAN;
+BEGIN
+  IF ListWalkerAtEndOfNest(l) THEN
+      l^ := l.parent^;
+      Advance(l.list,1) (* Advance over NestAtom *)
+  ELSIF ListWalkerAtStartOfNest(l) THEN
+    a := GetAtom(l.list);
+    NEW(lw);  lw^ := l^;
+    l.list := a(NestAtom).nest; Rewind(l.list);
+    l.parent := lw
+  ELSE
+    Advance(l.list,1)
+  END
+END AdvanceListWalkerByOne;
 
 PROCEDURE ListWalkerAdvancer(l: List; o: LONGINT);
-VAR lw: ListWalker; a: Atom;
+VAR lw: ListWalker; a: Atom; eol: BOOLEAN;
 BEGIN
   Assert(l IS ListWalker, "Expected array list");
   Assert((o > 0) OR (o = -1), "Unexpected offset passed to array list advancer");
@@ -295,14 +314,12 @@ BEGIN
     l(ListWalker)^ := lw^;
     Advance(l(ListWalker).list, -1)
   ELSE
-    (* Advance ListWalker by o elements, skip over nested nodes *)
-    Advance(l(ListWalker).list, o);
+    WHILE o > 0 DO AdvanceListWalkerByOne(l(ListWalker)); DEC(o) END
   END
 END ListWalkerAdvancer;
 
 PROCEDURE ListWalkerEOLTest(l: List): BOOLEAN;
 BEGIN Assert(l IS ListWalker, "Expected ListWalker");
-  ResolveNesting(l(ListWalker));
 RETURN (l(ListWalker).parent = NIL) & EOL(l(ListWalker).list) END ListWalkerEOLTest;
 
 PROCEDURE ListWalkerLengthGetter(l: List): LONGINT;
@@ -316,6 +333,21 @@ BEGIN
   result.handler := ListWalkerHandler;
   result.list    := l;
 RETURN result END MakeListWalker;
+
+
+(* -------------------------------Prefix tree ------------------------------- *)
+
+(* Advance lists over matching region *)
+PROCEDURE MatchList(l1, l2: List);
+VAR eol1, eol2: BOOLEAN; a1, a2: Atom;
+BEGIN
+  eol1 := EOL(l1); IF ~eol1 THEN a1 := GetAtom(l1) END;
+  eol2 := EOL(l2); IF ~eol2 THEN a2 := GetAtom(l2) END;
+  WHILE ~eol1 & ~eol2 & (a1 = a2) DO
+    Advance(l1,1); Advance(l2,1)
+  END
+END MatchList;
+
 
 
 (* -------------------------------- Parsing --------------------------------- *)
@@ -445,6 +477,9 @@ BEGIN
   ListWalkerHandler.Advance   := ListWalkerAdvancer;
   ListWalkerHandler.EOL       := ListWalkerEOLTest;
   ListWalkerHandler.GetLength := ListWalkerLengthGetter;
+
+  NEW(OpenNestingRepresentationAtom);  OpenNestingRepresentationAtom.char  := ORD('[');
+  NEW(CloseNestingRepresentationAtom); CloseNestingRepresentationAtom.char := ORD(']');
 
 
   Test
