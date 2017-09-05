@@ -12,6 +12,7 @@ TYPE
   Function       = PROCEDURE();
 
   Atom = POINTER TO AtomDesc; AtomDesc = RECORD END;
+  EndAtom       = POINTER TO EndAtomDesc;       EndAtomDesc       = RECORD(AtomDesc)                END;
   IntegerAtom   = POINTER TO IntegerAtomDesc;   IntegerAtomDesc   = RECORD(AtomDesc) int:  LONGINT  END;
   CharacterAtom = POINTER TO CharacterAtomDesc; CharacterAtomDesc = RECORD(AtomDesc) char: LONGINT  END; (* Unicode code point *)
   ForkAtom      = POINTER TO ForkAtomDesc;      ForkAtomDesc      = RECORD(AtomDesc) fork: List     END;
@@ -19,15 +20,13 @@ TYPE
   FunctionAtom  = POINTER TO FunctionAtomDesc;  FunctionAtomDesc  = RECORD(AtomDesc) fn:   Function END;
 
   AtomGetter   = PROCEDURE(l: List): Atom;
-  Advancer     = PROCEDURE(l: List; i: LONGINT);
-  EOLTest      = PROCEDURE(l: List): BOOLEAN;
-  LengthGetter = PROCEDURE(l: List): LONGINT;
+  Rewinder     = PROCEDURE(l: List);
+  Advancer     = PROCEDURE(l: List);
 
   ListHandler = POINTER TO RECORD
     GetAtom:   AtomGetter;
+    Rewind:    Rewinder;
     Advance:   Advancer;
-    EOL:       EOLTest;
-    GetLength: LengthGetter;
   END;
 
   ListDesc = RECORD handler: ListHandler END;
@@ -64,6 +63,8 @@ VAR
   LinkedListHandler: ListHandler;
   ArrayListHandler:  ListHandler;
   ListWalkerHandler: ListHandler;
+
+  ListEndAtom: EndAtom;
 
   OpenNestingRepresentationAtom:  CharacterAtom;
   CloseNestingRepresentationAtom: CharacterAtom;
@@ -102,16 +103,20 @@ END Error;
 
 (* ---------------------------- Handler shortcuts --------------------------- *)
 
-PROCEDURE GetAtom(l: List): Atom;       BEGIN RETURN l.handler.GetAtom(l)   END GetAtom;
-PROCEDURE Advance(l: List; o: LONGINT); BEGIN l.handler.Advance(l, o)       END Advance;
-PROCEDURE Rewind(l: List);              BEGIN l.handler.Advance(l, -1)      END Rewind;
-PROCEDURE EOL(l: List): BOOLEAN;        BEGIN RETURN l.handler.EOL(l)       END EOL;
-PROCEDURE GetLength(l: List): LONGINT;  BEGIN RETURN l.handler.GetLength(l) END GetLength;
+PROCEDURE GetAtom(l: List): Atom; BEGIN RETURN l.handler.GetAtom(l) END GetAtom;
+PROCEDURE Advance(l: List);       BEGIN l.handler.Advance(l)        END Advance;
+PROCEDURE Rewind(l: List);        BEGIN l.handler.Rewind(l)         END Rewind;
+
+PROCEDURE EOL(l: List): BOOLEAN;
+VAR a: Atom;
+BEGIN a := GetAtom(l);
+RETURN a IS EndAtom END EOL;
 
 PROCEDURE MakeIntegerAtom(i: LONGINT): IntegerAtom;
 VAR result: IntegerAtom;
 BEGIN NEW(result); result.int := i;
 RETURN result END MakeIntegerAtom;
+
 
 (* -------------------------------- Utility --------------------------------- *)
 
@@ -124,10 +129,11 @@ BEGIN
   WITH
     a: CharacterAtom DO wc(CHR(a.char))
   | a: IntegerAtom   DO wi(a.int)
-  | a: NestAtom      DO ws("<nest>") (*ws(".[."); WriteList(a.nest); ws(".].")*)
-  | a: ForkAtom      DO ws("<fork>")
-  | a: FunctionAtom  DO ws("<function>")
-  ELSE                  ws("<Unrecognised>")
+  | a: EndAtom       DO ws("<END>")
+  | a: NestAtom      DO ws("<NEST>") (*ws(".[."); WriteList(a.nest); ws(".].")*)
+  | a: ForkAtom      DO ws("<FORK>")
+  | a: FunctionAtom  DO ws("<FUNCTION>")
+  ELSE                  ws("<UNRECOGNISED>")
   END
 END WriteListNode;
 
@@ -136,7 +142,7 @@ BEGIN
   Rewind(l);
   IF EOL(l) THEN wsl("<empty>")
   ELSE
-    WHILE ~EOL(l) DO WriteListNode(l); Advance(l, 1) END;
+    WHILE ~EOL(l) DO WriteListNode(l); Advance(l) END;
     Rewind(l)
   END
 END WriteList;
@@ -147,35 +153,20 @@ END WriteList;
 PROCEDURE LinkedListAtomGetter(l: List): Atom;
 BEGIN
   Assert(l IS LinkedList, "Expected LinkedList");
-  Assert(l(LinkedList).curr # NIL, "Expected non-nil curr in LinkedList");
-  RETURN l(LinkedList).curr.atom;
+  IF l(LinkedList).curr = NIL THEN RETURN ListEndAtom
+  ELSE RETURN l(LinkedList).curr.atom
+  END
 END LinkedListAtomGetter;
 
-PROCEDURE LinkedListAdvancer(l: List; o: LONGINT);
-BEGIN
-  Assert(l IS LinkedList, "Expected linked list");
-  Assert((o > 0) OR (o = -1), "Unexpected offset passed to linked list advancer");
-  IF o < 0 THEN
-    l(LinkedList).curr := l(LinkedList).first
-  ELSE
-    WHILE (o > 0) & (l(LinkedList).curr # NIL) DO
-      l(LinkedList).curr := l(LinkedList).curr.next;
-      DEC(o)
-    END
-  END
+PROCEDURE LinkedListRewinder(l: List);
+BEGIN Assert(l IS LinkedList, "Expected linked list");
+  l(LinkedList).curr := l(LinkedList).first
+END LinkedListRewinder;
+
+PROCEDURE LinkedListAdvancer(l: List);
+BEGIN Assert(l IS LinkedList, "Expected linked list");
+  IF l(LinkedList).curr # NIL THEN l(LinkedList).curr := l(LinkedList).curr.next END
 END LinkedListAdvancer;
-
-PROCEDURE LinkedListEOLTest(l: List): BOOLEAN;
-BEGIN
-  Assert(l IS LinkedList, "Expected LinkedList");
-  RETURN l(LinkedList).curr = NIL
-END LinkedListEOLTest;
-
-PROCEDURE LinkedListLengthGetter(l: List): LONGINT;
-VAR result: LONGINT; p: LinkedListNode;
-BEGIN result := 0;  p := l(LinkedList).first;
-  WHILE p # NIL DO INC(result); p := p.next END;
-RETURN result END LinkedListLengthGetter;
 
 PROCEDURE MakeLinkedList(n: LinkedListNode): LinkedList;
 VAR result: LinkedList;
@@ -218,46 +209,35 @@ RETURN result END MakeText;
 
 PROCEDURE ArrayListAtomGetter(l: List): Atom;
 BEGIN Assert(l IS ArrayList, "Expected ArrayList");
-RETURN l(ArrayList).atoms[l(ArrayList).curr] END ArrayListAtomGetter;
+  IF l(ArrayList).curr >= LEN(l(ArrayList).atoms^) THEN RETURN ListEndAtom
+  ELSE RETURN l(ArrayList).atoms[l(ArrayList).curr]
+  END
+END ArrayListAtomGetter;
 
-PROCEDURE ArrayListAdvancer(l: List; o: LONGINT);
-BEGIN
-  Assert(l IS ArrayList, "Expected array list");
-  Assert((o > 0) OR (o = -1), "Unexpected offset passed to array list advancer");
-  IF o < 0 THEN
-    l(ArrayList).curr := 0
-  ELSIF l(ArrayList).curr + o < LEN(l(ArrayList).atoms^) THEN
-    INC(l(ArrayList).curr, o)
+PROCEDURE ArrayListRewinder(l: List);
+BEGIN Assert(l IS ArrayList, "Expected array list");
+  l(ArrayList).curr := 0
+END ArrayListRewinder;
+
+PROCEDURE ArrayListAdvancer(l: List);
+BEGIN Assert(l IS ArrayList, "Expected array list");
+  IF l(ArrayList).curr < LEN(l(ArrayList).atoms^) THEN
+    INC(l(ArrayList).curr)
   ELSE
     l(ArrayList).curr := LEN(l(ArrayList).atoms^)
   END
 END ArrayListAdvancer;
-
-PROCEDURE ArrayListEOLTest(l: List): BOOLEAN;
-BEGIN
-  Assert(l IS ArrayList, "Expected ArrayList");
-  RETURN l(ArrayList).curr >= LEN(l(ArrayList).atoms^)
-END ArrayListEOLTest;
-
-PROCEDURE ArrayListLengthGetter(l: List): LONGINT;
-BEGIN
-IF l(ArrayList).atoms = NIL THEN RETURN 0
-ELSE RETURN LEN(l(ArrayList).atoms^) END
-END ArrayListLengthGetter;
 
 PROCEDURE MakeArrayList(s: List): ArrayList;
 VAR result: ArrayList;  i, l: LONGINT;
 BEGIN
   NEW(result);
   result.handler := ArrayListHandler;
-
-  i := 0;  l := GetLength(s);
+  (* Measure length of s *)
+  l := 0; Rewind(s); WHILE ~EOL(s) DO Advance(s); INC(l) END;
   NEW(result.atoms, l);
-  Advance(s, -1);
-  FOR i := 0 TO l-1 DO
-    result.atoms[i] := GetAtom(s);
-    Advance(s, 1)
-  END;
+  Rewind(s);
+  FOR i := 0 TO l-1 DO result.atoms[i] := GetAtom(s); Advance(s) END;
   result.curr := 0;
 RETURN result END MakeArrayList;
 
@@ -265,14 +245,9 @@ RETURN result END MakeArrayList;
 (* ----------------------------- ListWalker -------------------------------- *)
 
 PROCEDURE ListWalkerAtStartOfNest(l: ListWalker): BOOLEAN;
-VAR a: Atom; result: BOOLEAN;
-BEGIN
-  result := FALSE;
-  IF ~EOL(l.list) THEN
-    a := GetAtom(l.list);
-    result := a IS NestAtom
-  END;
-RETURN result END ListWalkerAtStartOfNest;
+VAR a: Atom;
+BEGIN a := GetAtom(l.list);
+RETURN a IS NestAtom END ListWalkerAtStartOfNest;
 
 PROCEDURE ListWalkerAtEndOfNest(l: ListWalker): BOOLEAN;
 BEGIN
@@ -281,50 +256,35 @@ RETURN EOL(l.list) & (l.parent # NIL) END ListWalkerAtEndOfNest;
 PROCEDURE ListWalkerAtomGetter(l: List): Atom;
 VAR a: Atom;
 BEGIN Assert(l IS ListWalker, "Expected ListWalker");
-  a := NIL;
-  IF    ListWalkerAtEndOfNest(l(ListWalker))   THEN a := CloseNestingRepresentationAtom
-  ELSIF ListWalkerAtStartOfNest(l(ListWalker)) THEN a := OpenNestingRepresentationAtom
-  ELSE  a := GetAtom(l(ListWalker).list)
+  a := GetAtom(l(ListWalker).list);
+  IF (a IS EndAtom) & (l(ListWalker).parent # NIL) THEN a := CloseNestingRepresentationAtom
+  ELSIF a IS NestAtom THEN a := OpenNestingRepresentationAtom
   END;
 RETURN a END ListWalkerAtomGetter;
 
-PROCEDURE AdvanceListWalkerByOne(l: ListWalker);
+PROCEDURE ListWalkerRewinder(l: List);
 VAR lw: ListWalker; a: Atom; eol: BOOLEAN;
-BEGIN
-  IF ListWalkerAtEndOfNest(l) THEN
-      l^ := l.parent^;
-      Advance(l.list,1) (* Advance over NestAtom *)
-  ELSIF ListWalkerAtStartOfNest(l) THEN
-    a := GetAtom(l.list);
-    NEW(lw);  lw^ := l^;
-    l.list := a(NestAtom).nest; Rewind(l.list);
-    l.parent := lw
-  ELSE
-    Advance(l.list,1)
-  END
-END AdvanceListWalkerByOne;
+BEGIN Assert(l IS ListWalker, "Expected array list");
+  lw := l(ListWalker); WHILE lw.parent # NIL DO lw := lw.parent END;
+  Rewind(lw.list);
+  l(ListWalker)^ := lw^
+END ListWalkerRewinder;
 
-PROCEDURE ListWalkerAdvancer(l: List; o: LONGINT);
-VAR lw: ListWalker; a: Atom; eol: BOOLEAN;
-BEGIN
-  Assert(l IS ListWalker, "Expected array list");
-  Assert((o > 0) OR (o = -1), "Unexpected offset passed to array list advancer");
-  IF o < 0 THEN (* Rewind ListWalker *)
-    lw := l(ListWalker); WHILE lw.parent # NIL DO lw := lw.parent END;
-    l(ListWalker)^ := lw^;
-    Advance(l(ListWalker).list, -1)
+PROCEDURE ListWalkerAdvancer(l: List);
+VAR lw, parent: ListWalker; a: Atom;
+BEGIN Assert(l IS ListWalker, "Expected array list");
+  lw := l(ListWalker);
+  a := GetAtom(lw.list);
+  IF (a IS EndAtom) & (lw.parent # NIL) THEN
+      lw^ := lw.parent^;
+      Advance(lw.list) (* Advance over NestAtom *)
+  ELSIF a IS NestAtom THEN
+    NEW(parent);  parent^ := lw^; lw.parent := parent;
+    lw.list := a(NestAtom).nest; Rewind(lw.list);
   ELSE
-    WHILE o > 0 DO AdvanceListWalkerByOne(l(ListWalker)); DEC(o) END
-  END
+    Advance(lw.list)
+  END;
 END ListWalkerAdvancer;
-
-PROCEDURE ListWalkerEOLTest(l: List): BOOLEAN;
-BEGIN Assert(l IS ListWalker, "Expected ListWalker");
-RETURN (l(ListWalker).parent = NIL) & EOL(l(ListWalker).list) END ListWalkerEOLTest;
-
-PROCEDURE ListWalkerLengthGetter(l: List): LONGINT;
-BEGIN
-RETURN GetLength(l(ListWalker).list) END ListWalkerLengthGetter;
 
 PROCEDURE MakeListWalker(l: List): ListWalker;
 VAR result: ListWalker;
@@ -334,21 +294,38 @@ BEGIN
   result.list    := l;
 RETURN result END MakeListWalker;
 
+(*
+PROCEDURE CopyListWalker(l: ListWalker): ListWalker;
+VAR result, t: ListWalker;
+BEGIN
+  NEW(result); result^ := l^; t := result;
+  WHILE l.parent # NIL DO
+    NEW(t.parent); t.parent^ := l.parent^;
+    t := t.parent; l := l.parent
+  END;
+RETURN result END CopyListWalker;
+*)
+
 
 (* -------------------------------Prefix tree ------------------------------- *)
 
 (* Advance lists over matching region *)
-PROCEDURE MatchList(l1, l2: List);
-VAR eol1, eol2: BOOLEAN; a1, a2: Atom;
+PROCEDURE MatchLists(l1, l2: List);
+VAR a1, a2: Atom;
 BEGIN
-  eol1 := EOL(l1); IF ~eol1 THEN a1 := GetAtom(l1) END;
-  eol2 := EOL(l2); IF ~eol2 THEN a2 := GetAtom(l2) END;
-  WHILE ~eol1 & ~eol2 & (a1 = a2) DO
-    Advance(l1,1); Advance(l2,1)
+  a1 := GetAtom(l1);  a2 := GetAtom(l2);
+  WHILE (a1 = a2) & ~(a1 IS EndAtom) DO
+    Advance(l1); Advance(l2);
+    a1 := GetAtom(l1);  a2 := GetAtom(l2);
   END
-END MatchList;
+END MatchLists;
+
+PROCEDURE MatchForkedLists(l1, l2: List);
+BEGIN
+  MatchLists(l1, l2);
 
 
+END MatchForkedLists;
 
 (* -------------------------------- Parsing --------------------------------- *)
 
@@ -367,7 +344,7 @@ BEGIN
     ELSE
     END;
     IF depth > 0 THEN LinkedListAddAtom(result, a) END;
-    Advance(l,1)
+    Advance(l)
   END;
 RETURN result END ParseNestedList;
 
@@ -380,7 +357,7 @@ BEGIN
     d := a(CharacterAtom).char - ORD('0');
     (*wlc; ws("ParseInteger, digit = "); wi(d); wl;*)
     IF (d < 0) OR (d > 9) THEN l := NIL
-    ELSE result := result * 10 + d; Advance(l,1)
+    ELSE result := result * 10 + d; Advance(l)
     END
   END;
 RETURN result; END ParseInteger;
@@ -396,7 +373,7 @@ BEGIN
     CASE ch OF
       ORD('['), ORD(']'), ORD(' '), 13, 10: l := NIL
     ELSE
-      LinkedListAddAtom(result, a);  Advance(l,1);
+      LinkedListAddAtom(result, a);  Advance(l);
     END;
   END;
   wlc; ws("Parse word returning: '"); WriteList(result); wsl("'");
@@ -410,12 +387,12 @@ BEGIN
     a := GetAtom(l); Assert(a IS CharacterAtom, "Parse encountered non-character atom");
     ch := a(CharacterAtom).char;
     CASE ch OF
-      ORD('['): Advance(l,1); LinkedListAddAtom(result, MakeNestAtom(ParseNestedList(l)))
+      ORD('['): Advance(l); LinkedListAddAtom(result, MakeNestAtom(ParseNestedList(l)))
     | ORD(' '),13,11:
     | ORD('0')..ORD('9'): LinkedListAddAtom(result, MakeIntegerAtom(ParseInteger(l)))
     ELSE LinkedListAddAtom(result, MakeNestAtom(ParseWord(l)))
     END;
-    Advance(l,1);
+    Advance(l);
   END;
 RETURN result END Parse;
 
@@ -423,7 +400,7 @@ RETURN result END Parse;
 (* -------------------------------- Testing --------------------------------- *)
 
 PROCEDURE Test;
-VAR l1, l2, l3, n1: List; na: NestAtom;
+VAR l1, l2, l3, n1: List; na: NestAtom; i: INTEGER;
 BEGIN
   l1 := MakeText("This is a test.");
   WriteList(l1); wl;
@@ -435,7 +412,7 @@ BEGIN
   WriteList(l3); wl;
 
   n1 := MakeText(" nested ");
-  Rewind(l1); Advance(l1, 9);
+  Rewind(l1); FOR i := 1 TO 9 DO Advance(l1) END;
   NEW(na); na.nest := n1;
   l1(LinkedList).curr.atom := na;
 
@@ -461,22 +438,22 @@ BEGIN
   Stack := NIL;
 
   NEW(LinkedListHandler);
-  LinkedListHandler.GetAtom   := LinkedListAtomGetter;
-  LinkedListHandler.Advance   := LinkedListAdvancer;
-  LinkedListHandler.EOL       := LinkedListEOLTest;
-  LinkedListHandler.GetLength := LinkedListLengthGetter;
+  LinkedListHandler.GetAtom := LinkedListAtomGetter;
+  LinkedListHandler.Rewind  := LinkedListRewinder;
+  LinkedListHandler.Advance := LinkedListAdvancer;
 
   NEW(ArrayListHandler);
-  ArrayListHandler.GetAtom   := ArrayListAtomGetter;
-  ArrayListHandler.Advance   := ArrayListAdvancer;
-  ArrayListHandler.EOL       := ArrayListEOLTest;
-  ArrayListHandler.GetLength := ArrayListLengthGetter;
+  ArrayListHandler.GetAtom := ArrayListAtomGetter;
+  ArrayListHandler.Rewind  := ArrayListRewinder;
+  ArrayListHandler.Advance := ArrayListAdvancer;
 
   NEW(ListWalkerHandler);
-  ListWalkerHandler.GetAtom   := ListWalkerAtomGetter;
-  ListWalkerHandler.Advance   := ListWalkerAdvancer;
-  ListWalkerHandler.EOL       := ListWalkerEOLTest;
-  ListWalkerHandler.GetLength := ListWalkerLengthGetter;
+  ListWalkerHandler.GetAtom := ListWalkerAtomGetter;
+  ListWalkerHandler.Rewind  := ListWalkerRewinder;
+  ListWalkerHandler.Advance := ListWalkerAdvancer;
+
+
+  NEW(ListEndAtom);
 
   NEW(OpenNestingRepresentationAtom);  OpenNestingRepresentationAtom.char  := ORD('[');
   NEW(CloseNestingRepresentationAtom); CloseNestingRepresentationAtom.char := ORD(']');
