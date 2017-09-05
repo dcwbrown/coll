@@ -261,28 +261,22 @@ RETURN result END MakeArrayList;
 
 (* ----------------------------- ListWalker -------------------------------- *)
 
-PROCEDURE AtNestStart(l: ListWalker): BOOLEAN;
-VAR a: Atom; result: BOOLEAN;
-BEGIN result := FALSE;
-  IF ~EOL(l.list) THEN a := GetAtom(l.list); result := a IS NestAtom END;
-RETURN result END AtNestStart;
-
-PROCEDURE AtNestEnd(l: ListWalker): BOOLEAN;
-BEGIN RETURN EOL(l.list) & (l.parent # NIL) END AtNestEnd;
-
 PROCEDURE ResolveNesting(l: ListWalker); (* At nest boundaries steps in or out *)
-VAR a: Atom; lw: ListWalker;
+VAR a: Atom; lw: ListWalker; eol: BOOLEAN;
 BEGIN
-  WHILE AtNestStart(l) OR AtNestEnd(l) DO
-    IF AtNestStart(l) THEN
-      a := GetAtom(l.list); (* Get the nest atom *)
+  eol := EOL(l.list);  IF ~eol THEN a := GetAtom(l.list) END;
+  WHILE ((~eol) & (a IS NestAtom))
+     OR (eol & (l.parent # NIL)) DO
+    (* At start or end of nesting *)
+    IF ~eol & (a IS NestAtom) THEN (* drop into nesting *)
       NEW(lw);  lw^ := l^;
       l.list := a(NestAtom).nest;
       l.parent := lw
-    ELSE (* At nest end *)
+    ELSE (* exit from nesting *)
       l^ := l.parent^;
       Advance(l.list, 1)
-    END
+    END;
+    eol := EOL(l.list);  IF ~eol THEN a := GetAtom(l.list) END;
   END
 END ResolveNesting;
 
