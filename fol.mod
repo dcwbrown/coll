@@ -9,7 +9,7 @@ TYPE
 
   List           = POINTER TO ListDesc;
   LinkedListNode = POINTER TO LinkedListNodeDesc;
-  Function       = PROCEDURE();
+  Function       = PROCEDURE(): List;
 
   Atom = POINTER TO AtomDesc; AtomDesc = RECORD END;
   EndAtom       = POINTER TO EndAtomDesc;       EndAtomDesc       = RECORD(AtomDesc)                END;
@@ -53,15 +53,21 @@ TYPE
     parent: ListWalker
   END;
 
+  IotaFunctionList = POINTER TO IotaFunctionListDesc;
+  IotaFunctionListDesc = RECORD (ListDesc)
+    curr, limit: LONGINT
+  END;
+
 
 
 VAR
   (*Names: INTEGER;*)  (* Root LinkedListNode of name table *)
   Abort: BOOLEAN;
 
-  LinkedListHandler: ListHandler;
-  ArrayListHandler:  ListHandler;
-  ListWalkerHandler: ListHandler;
+  LinkedListHandler:   ListHandler;
+  ArrayListHandler:    ListHandler;
+  ListWalkerHandler:   ListHandler;
+  IotaFunctionHandler: ListHandler;
 
   ListEndAtom: EndAtom;
 
@@ -70,6 +76,7 @@ VAR
 
   Stack: LinkedList;
 
+  EmptyList: LinkedList;
 
 
 (* ----------------- TextWriter convenience functions ----------------------- *)
@@ -292,9 +299,8 @@ VAR a: Atom;
 BEGIN
   a := GetAtom(l);
   WHILE ~(a IS EndAtom) DO
-    WITH a: FunctionAtom DO a.fn
-    ELSE LinkedListPushAtom(Stack, a) END;
-    Advance(l); a := GetAtom(l)
+    IF a IS FunctionAtom THEN a := MakeLinkAtom(a(FunctionAtom).fn()) END;
+    LinkedListPushAtom(Stack, a); Advance(l); a := GetAtom(l)
   END
 END Evaluate;
 
@@ -306,18 +312,54 @@ RETURN result END MakeIntrinsic;
 
 (* ------------------------------ Intrinsics -------------------------------- *)
 
-PROCEDURE IntrinsicTest();
-BEGIN wlc; wsl("** Intrinsic test evaluated **")
-END IntrinsicTest;
+PROCEDURE IntrinsicTest(): List;
+BEGIN wlc; wsl("** Intrinsic test evaluated **");
+RETURN EmptyList END IntrinsicTest;
 
-PROCEDURE IntrinsicWL();
-BEGIN wl
-END IntrinsicWL;
+PROCEDURE IntrinsicWL(): List;
+BEGIN wl;
+RETURN EmptyList END IntrinsicWL;
 
-PROCEDURE IntrinsicPrint();
+PROCEDURE IntrinsicPrintAtom(): List;
 VAR a: Atom;
-BEGIN a := LinkedListPopAtom(Stack); WriteAtom(a)
-END IntrinsicPrint;
+BEGIN a := LinkedListPopAtom(Stack); WriteAtom(a);
+RETURN EmptyList END IntrinsicPrintAtom;
+
+PROCEDURE IntrinsicPrintList(): List;
+VAR a: Atom;
+BEGIN a := LinkedListPopAtom(Stack); WriteList(a(LinkAtom).link);
+RETURN EmptyList END IntrinsicPrintList;
+
+
+(* -------------------------- Intrinsic Iota -------------------------------- *)
+
+PROCEDURE IotaFunctionAtomGetter(l: List): Atom;
+VAR ifl: IotaFunctionList; result: Atom;
+BEGIN ifl := l(IotaFunctionList); result := ListEndAtom;
+  IF ifl.curr < ifl.limit THEN result := MakeIntegerAtom(ifl.curr) END;
+RETURN result END IotaFunctionAtomGetter;
+
+PROCEDURE IotaFunctionRewinder(l: List);
+VAR ifl: IotaFunctionList;
+BEGIN ifl := l(IotaFunctionList); ifl.curr := 0
+END IotaFunctionRewinder;
+
+PROCEDURE IotaFunctionAdvancer(l: List);
+VAR ifl: IotaFunctionList;
+BEGIN ifl := l(IotaFunctionList);
+  IF ifl.curr < ifl.limit THEN INC(ifl.curr) END
+END IotaFunctionAdvancer;
+
+PROCEDURE AtomAsInt(a: Atom): LONGINT;
+BEGIN
+RETURN a(IntegerAtom).int END AtomAsInt;
+
+PROCEDURE IntrinsicIota(): List;
+VAR limit: LONGINT; result: IotaFunctionList;
+BEGIN limit := AtomAsInt(LinkedListPopAtom(Stack));
+  NEW(result); result.handler := IotaFunctionHandler;
+  result.curr := 0; result.limit := limit;
+RETURN result END IntrinsicIota;
 
 
 (* ------------------------------ Prefix tree ------------------------------- *)
@@ -430,7 +472,7 @@ RETURN result END Parse;
 (* -------------------------------- Testing --------------------------------- *)
 
 PROCEDURE Test;
-VAR l1, l2, l3, n1: List; na: LinkAtom; fa: LinkAtom;
+VAR l1, l2, l3, n1: List;  ll1: LinkedList;  na, fa: LinkAtom;
     i: INTEGER; match: BOOLEAN;
 BEGIN
   l1 := MakeText("This is a test.");
@@ -508,12 +550,19 @@ BEGIN
     ws("  l2 ends: "); WriteList(l2); wl;
   END;
 
-  l1 := MakeLinkedList(NIL);
-  LinkedListAddAtom(l1(LinkedList), MakeIntrinsic(IntrinsicTest));
-  LinkedListAddAtom(l1(LinkedList), MakeIntegerAtom(1234));
-  LinkedListAddAtom(l1(LinkedList), MakeIntrinsic(IntrinsicPrint));
-  LinkedListAddAtom(l1(LinkedList), MakeIntrinsic(IntrinsicWL));
-  Rewind(l1); Evaluate(l1);
+  ll1 := MakeLinkedList(NIL);
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicTest));
+  LinkedListAddAtom(ll1, MakeIntegerAtom(1234));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicPrintAtom));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicWL));
+  Rewind(ll1); Evaluate(ll1);
+
+  ll1 := MakeLinkedList(NIL);
+  LinkedListAddAtom(ll1, MakeIntegerAtom(10));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicIota));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicPrintList));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicWL));
+  Rewind(ll1); Evaluate(ll1);
 
 END Test;
 
@@ -538,10 +587,17 @@ BEGIN
   ListWalkerHandler.Rewind  := ListWalkerRewinder;
   ListWalkerHandler.Advance := ListWalkerAdvancer;
 
+  NEW(IotaFunctionHandler);
+  IotaFunctionHandler.GetAtom := IotaFunctionAtomGetter;
+  IotaFunctionHandler.Rewind  := IotaFunctionRewinder;
+  IotaFunctionHandler.Advance := IotaFunctionAdvancer;
+
   NEW(ListEndAtom);
 
   NEW(OpenNestingRepresentationAtom);  OpenNestingRepresentationAtom.char  := ORD('[');
   NEW(CloseNestingRepresentationAtom); CloseNestingRepresentationAtom.char := ORD(']');
+
+  EmptyList := MakeLinkedList(NIL);
 
 
   Test
