@@ -58,16 +58,29 @@ TYPE
     curr, limit: LONGINT
   END;
 
+  MultiplyFunctionList = POINTER TO MultiplyFunctionListDesc;
+  MultiplyFunctionListDesc = RECORD (ListDesc)
+    l1, l2: List;
+    l1ended, l2ended: BOOLEAN;
+  END;
+
+  SingletonAtomList = POINTER TO SingletonAtomListDesc;
+  SingletonAtomListDesc = RECORD (ListDesc)
+    a: Atom; atend: BOOLEAN
+  END;
+
 
 
 VAR
   (*Names: INTEGER;*)  (* Root LinkedListNode of name table *)
   Abort: BOOLEAN;
 
-  LinkedListHandler:   ListHandler;
-  ArrayListHandler:    ListHandler;
-  ListWalkerHandler:   ListHandler;
-  IotaFunctionHandler: ListHandler;
+  SingletonAtomListHandler: ListHandler;
+  LinkedListHandler:        ListHandler;
+  ArrayListHandler:         ListHandler;
+  ListWalkerHandler:        ListHandler;
+  IotaFunctionHandler:      ListHandler;
+  MultiplyFunctionHandler:  ListHandler;
 
   ListEndAtom: EndAtom;
 
@@ -155,13 +168,45 @@ VAR result: LinkAtom;
 BEGIN NEW(result); result.link := l;
 RETURN result END MakeLinkAtom;
 
+PROCEDURE AtomAsInt(a: Atom): LONGINT;
+BEGIN
+RETURN a(IntegerAtom).int END AtomAsInt;
+
+
+(* ------------------- SingletonAtom list implementation -------------------- *)
+
+PROCEDURE SingletonAtomListAtomGetter(l: List): Atom;
+VAR sal: SingletonAtomList; result: Atom;
+BEGIN sal := l(SingletonAtomList); result := ListEndAtom;
+  IF ~sal.atend THEN result := sal.a END;
+RETURN result  END SingletonAtomListAtomGetter;
+
+PROCEDURE SingletonAtomListRewinder(l: List);
+BEGIN l(SingletonAtomList).atend := FALSE
+END SingletonAtomListRewinder;
+
+PROCEDURE SingletonAtomListAdvancer(l: List);
+BEGIN l(SingletonAtomList).atend := TRUE
+END SingletonAtomListAdvancer;
+
+PROCEDURE AtomAsList(a: Atom): List;
+VAR result: List; sal: SingletonAtomList;
+BEGIN
+  IF a IS LinkAtom THEN
+    result := a(LinkAtom).link
+  ELSE
+    NEW(sal); sal.handler := SingletonAtomListHandler;
+    sal.a := a; sal.atend := FALSE;
+    result := sal
+  END;
+RETURN result END AtomAsList;
 
 (* ----------------------- Linked list implementation ----------------------- *)
 
 PROCEDURE LinkedListAtomGetter(l: List): Atom;
 VAR ll: LinkedList; result: Atom;
 BEGIN ll := l(LinkedList); result := ListEndAtom;
-  IF l(LinkedList).curr # NIL THEN result := l(LinkedList).curr.atom END;
+  IF ll.curr # NIL THEN result := ll.curr.atom END;
 RETURN result  END LinkedListAtomGetter;
 
 PROCEDURE LinkedListRewinder(l: List);
@@ -340,9 +385,7 @@ BEGIN ifl := l(IotaFunctionList); result := ListEndAtom;
 RETURN result END IotaFunctionAtomGetter;
 
 PROCEDURE IotaFunctionRewinder(l: List);
-VAR ifl: IotaFunctionList;
-BEGIN ifl := l(IotaFunctionList); ifl.curr := 0
-END IotaFunctionRewinder;
+BEGIN l(IotaFunctionList).curr := 0 END IotaFunctionRewinder;
 
 PROCEDURE IotaFunctionAdvancer(l: List);
 VAR ifl: IotaFunctionList;
@@ -350,16 +393,49 @@ BEGIN ifl := l(IotaFunctionList);
   IF ifl.curr < ifl.limit THEN INC(ifl.curr) END
 END IotaFunctionAdvancer;
 
-PROCEDURE AtomAsInt(a: Atom): LONGINT;
-BEGIN
-RETURN a(IntegerAtom).int END AtomAsInt;
-
 PROCEDURE IntrinsicIota(): List;
 VAR limit: LONGINT; result: IotaFunctionList;
 BEGIN limit := AtomAsInt(LinkedListPopAtom(Stack));
   NEW(result); result.handler := IotaFunctionHandler;
   result.curr := 0; result.limit := limit;
 RETURN result END IntrinsicIota;
+
+
+(* ------------------------ Intrinsic Multiply ------------------------------ *)
+
+PROCEDURE MultiplyFunctionAtomGetter(l: List): Atom;
+VAR mfl: MultiplyFunctionList; a1, a2, result: Atom;
+BEGIN mfl := l(MultiplyFunctionList); result := ListEndAtom;
+  a1 := GetAtom(mfl.l1); a2 := GetAtom(mfl.l2);
+  IF ~((a1 IS EndAtom) OR (a2 IS EndAtom)) THEN
+    result := MakeIntegerAtom(AtomAsInt(a1) * AtomAsInt(a2))
+  END;
+RETURN result END MultiplyFunctionAtomGetter;
+
+PROCEDURE MultiplyFunctionRewinder(l: List);
+VAR mfl: MultiplyFunctionList;
+BEGIN mfl := l(MultiplyFunctionList);
+  Rewind(mfl.l1);  Rewind(mfl.l2);
+  mfl.l1ended := FALSE;  mfl.l2ended := FALSE
+END MultiplyFunctionRewinder;
+
+PROCEDURE MultiplyFunctionAdvancer(l: List);
+VAR mfl: MultiplyFunctionList; a1, a2: Atom;
+BEGIN mfl := l(MultiplyFunctionList);
+  Advance(mfl.l1); a1 := GetAtom(mfl.l1); mfl.l1ended := mfl.l1ended OR (a1 IS EndAtom);
+  Advance(mfl.l2); a2 := GetAtom(mfl.l2); mfl.l2ended := mfl.l2ended OR (a2 IS EndAtom);
+  IF (a1 IS EndAtom) & ~mfl.l2ended THEN Rewind(mfl.l1) END;
+  IF (a2 IS EndAtom) & ~mfl.l1ended THEN Rewind(mfl.l2) END;
+END MultiplyFunctionAdvancer;
+
+PROCEDURE IntrinsicMultiply(): List;
+VAR result: MultiplyFunctionList;
+BEGIN
+  NEW(result); result.handler := MultiplyFunctionHandler;
+  result.l1ended := FALSE;  result.l2ended := FALSE;
+  result.l2 := AtomAsList(LinkedListPopAtom(Stack));
+  result.l1 := AtomAsList(LinkedListPopAtom(Stack));
+RETURN result END IntrinsicMultiply;
 
 
 (* ------------------------------ Prefix tree ------------------------------- *)
@@ -564,6 +640,36 @@ BEGIN
   LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicWL));
   Rewind(ll1); Evaluate(ll1);
 
+  ll1 := MakeLinkedList(NIL);
+  LinkedListAddAtom(ll1, MakeIntegerAtom(10));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicIota));
+  LinkedListAddAtom(ll1, MakeIntegerAtom(2));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicMultiply));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicPrintList));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicWL));
+  Rewind(ll1); Evaluate(ll1);
+
+  ll1 := MakeLinkedList(NIL);
+  LinkedListAddAtom(ll1, MakeIntegerAtom(2));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicIota));
+  LinkedListAddAtom(ll1, MakeIntegerAtom(10));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicIota));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicMultiply));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicPrintList));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicWL));
+  Rewind(ll1); Evaluate(ll1);
+
+  ll1 := MakeLinkedList(NIL);
+  LinkedListAddAtom(ll1, MakeIntegerAtom(10));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicIota));
+  l2 := MakeLinkedList(MakeLinkedListNode(MakeIntegerAtom(2)));
+  LinkedListAddAtom(l2(LinkedList), MakeIntegerAtom(3));
+  LinkedListAddAtom(ll1, MakeLinkAtom(l2));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicMultiply));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicPrintList));
+  LinkedListAddAtom(ll1, MakeIntrinsic(IntrinsicWL));
+  Rewind(ll1); Evaluate(ll1);
+
 END Test;
 
 (* ---------------------------- Initialization ------------------------------ *)
@@ -591,6 +697,16 @@ BEGIN
   IotaFunctionHandler.GetAtom := IotaFunctionAtomGetter;
   IotaFunctionHandler.Rewind  := IotaFunctionRewinder;
   IotaFunctionHandler.Advance := IotaFunctionAdvancer;
+
+  NEW(MultiplyFunctionHandler);
+  MultiplyFunctionHandler.GetAtom := MultiplyFunctionAtomGetter;
+  MultiplyFunctionHandler.Rewind  := MultiplyFunctionRewinder;
+  MultiplyFunctionHandler.Advance := MultiplyFunctionAdvancer;
+
+  NEW(SingletonAtomListHandler);
+  SingletonAtomListHandler.GetAtom := SingletonAtomListAtomGetter;
+  SingletonAtomListHandler.Rewind  := SingletonAtomListRewinder;
+  SingletonAtomListHandler.Advance := SingletonAtomListAdvancer;
 
   NEW(ListEndAtom);
 
