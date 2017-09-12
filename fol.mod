@@ -15,8 +15,7 @@ TYPE
   EndAtom       = POINTER TO EndAtomDesc;       EndAtomDesc       = RECORD(AtomDesc)                END;
   IntegerAtom   = POINTER TO IntegerAtomDesc;   IntegerAtomDesc   = RECORD(AtomDesc) int:  LONGINT  END;
   CharacterAtom = POINTER TO CharacterAtomDesc; CharacterAtomDesc = RECORD(AtomDesc) char: LONGINT  END; (* Unicode code point *)
-  ForkAtom      = POINTER TO ForkAtomDesc;      ForkAtomDesc      = RECORD(AtomDesc) fork: List     END;
-  NestAtom      = POINTER TO NestAtomDesc;      NestAtomDesc      = RECORD(AtomDesc) nest: List     END;
+  LinkAtom      = POINTER TO LinkAtomDesc;      LinkAtomDesc      = RECORD(AtomDesc) link: List     END;
   FunctionAtom  = POINTER TO FunctionAtomDesc;  FunctionAtomDesc  = RECORD(AtomDesc) fn:   Function END;
 
   AtomGetter   = PROCEDURE(l: List): Atom;
@@ -128,9 +127,8 @@ BEGIN
     a: CharacterAtom DO wc(CHR(a.char))
   | a: IntegerAtom   DO wi(a.int)
   | a: EndAtom       DO ws("<END>")
-  | a: NestAtom      DO ws("<NEST>") (*ws(".[."); WriteList(a.nest); ws(".].")*)
-  | a: ForkAtom      DO ws("<FORK>")
-  | a: FunctionAtom  DO ws("<FUNCTION>")
+  | a: LinkAtom      DO ws("<link>") (*ws(".[."); WriteList(a.link); ws(".].")*)
+   | a: FunctionAtom  DO ws("<FUNCTION>")
   ELSE                  ws("<UNRECOGNISED>")
   END
 END WriteAtom;
@@ -145,10 +143,10 @@ BEGIN
   END
 END WriteList;
 
-PROCEDURE MakeNestAtom(l: List): NestAtom;
-VAR result: NestAtom;
-BEGIN NEW(result); result.nest := l;
-RETURN result END MakeNestAtom;
+PROCEDURE MakeLinkAtom(l: List): LinkAtom;
+VAR result: LinkAtom;
+BEGIN NEW(result); result.link := l;
+RETURN result END MakeLinkAtom;
 
 
 (* ----------------------- Linked list implementation ----------------------- *)
@@ -247,21 +245,12 @@ RETURN result END MakeArrayList;
 
 (* ----------------------------- ListWalker -------------------------------- *)
 
-PROCEDURE ListWalkerAtStartOfNest(l: ListWalker): BOOLEAN;
-VAR a: Atom;
-BEGIN a := GetAtom(l.list);
-RETURN a IS NestAtom END ListWalkerAtStartOfNest;
-
-PROCEDURE ListWalkerAtEndOfNest(l: ListWalker): BOOLEAN;
-BEGIN
-RETURN EOL(l.list) & (l.parent # NIL) END ListWalkerAtEndOfNest;
-
 PROCEDURE ListWalkerAtomGetter(l: List): Atom;
 VAR a: Atom;
 BEGIN Assert(l IS ListWalker, "Expected ListWalker");
   a := GetAtom(l(ListWalker).list);
   IF (a IS EndAtom) & (l(ListWalker).parent # NIL) THEN a := CloseNestingRepresentationAtom
-  ELSIF a IS NestAtom THEN a := OpenNestingRepresentationAtom
+  ELSIF a IS LinkAtom THEN a := OpenNestingRepresentationAtom
   END;
 RETURN a END ListWalkerAtomGetter;
 
@@ -278,10 +267,10 @@ VAR lw, parent: ListWalker; a: Atom;
 BEGIN lw := l(ListWalker);
   a := GetAtom(lw.list);
   IF (a IS EndAtom) & (lw.parent # NIL) THEN
-      lw^ := lw.parent^;  Advance(lw.list) (* Advance over NestAtom *)
-  ELSIF a IS NestAtom THEN
+      lw^ := lw.parent^;  Advance(lw.list) (* Advance over LinkAtom *)
+  ELSIF a IS LinkAtom THEN
     NEW(parent);  parent^ := lw^; lw.parent := parent;
-    lw.list := a(NestAtom).nest; Rewind(lw.list);
+    lw.list := a(LinkAtom).link; Rewind(lw.list);
   ELSE
     Advance(lw.list)
   END;
@@ -352,28 +341,28 @@ BEGIN result := FALSE;
   END;
 RETURN result END MatchLists;
 
-(* Assumption: at a fork the 2 choices must be differing atoms. *)
+(* Assumption: at a link the 2 choices must be differing atoms. *)
 PROCEDURE MatchForkedLists(l1, l2: ListWalker): BOOLEAN;
 VAR lw1, lw2: ListWalker; a1, a2: Atom; result: BOOLEAN;
 BEGIN
   result := MatchLists(l1, l2);
-  (* If there's a fork choose which path to take *)
+  (* If there's a link choose which path to take *)
   a1 := GetAtom(l1);  a2 := GetAtom(l2);
-  IF a1 IS ForkAtom THEN
-    wsl("Recurse - try fork.");
-    lw1 := MakeListWalker(a1(ForkAtom).fork); Rewind(lw1); (* Try alternate first *)
+  IF a1 IS LinkAtom THEN
+    wsl("Recurse - try link.");
+    lw1 := MakeListWalker(a1(LinkAtom).link); Rewind(lw1); (* Try alternate first *)
     IF MatchForkedLists(lw1, l2) THEN
-      wsl("Fork taken");
+      wsl("link taken");
       l1^ := lw1^; result := TRUE
-    ELSE (* alternate fork didn't match, so skip nest atom *)
-      wsl("Fork not taken");
+    ELSE (* alternate link didn't match, so skip link atom *)
+      wsl("link not taken");
       Advance(l1.list);
       wsl("Recurse - try next.");
       IF MatchForkedLists(l1, l2) THEN
         l1^ := lw1^; result := TRUE
       END
     END
-  ELSIF a2 IS ForkAtom THEN
+  ELSIF a2 IS LinkAtom THEN
     result := result OR MatchForkedLists(l2, l1)
   END;
 RETURN result END MatchForkedLists;
@@ -428,10 +417,10 @@ BEGIN
     a := GetAtom(l); Assert(a IS CharacterAtom, "Parse encountered non-character atom");
     ch := a(CharacterAtom).char;
     CASE ch OF
-      ORD('['): Advance(l); LinkedListAddAtom(result, MakeNestAtom(ParseNestedList(l)))
+      ORD('['): Advance(l); LinkedListAddAtom(result, MakeLinkAtom(ParseNestedList(l)))
     | ORD(' '),13,11:
     | ORD('0')..ORD('9'): LinkedListAddAtom(result, MakeIntegerAtom(ParseInteger(l)))
-    ELSE LinkedListAddAtom(result, MakeNestAtom(ParseWord(l)))
+    ELSE LinkedListAddAtom(result, MakeLinkAtom(ParseWord(l)))
     END;
     Advance(l);
   END;
@@ -441,7 +430,7 @@ RETURN result END Parse;
 (* -------------------------------- Testing --------------------------------- *)
 
 PROCEDURE Test;
-VAR l1, l2, l3, n1: List; na: NestAtom; fa: ForkAtom;
+VAR l1, l2, l3, n1: List; na: LinkAtom; fa: LinkAtom;
     i: INTEGER; match: BOOLEAN;
 BEGIN
   l1 := MakeText("This is a test.");
@@ -455,7 +444,7 @@ BEGIN
 
   n1 := MakeText(" nested ");
   Rewind(l1); FOR i := 1 TO 9 DO Advance(l1) END;
-  NEW(na); na.nest := n1;
+  NEW(na); na.link := n1;
   l1(LinkedList).curr.atom := na;
 
   Rewind(l1); WriteList(l1); wl;
@@ -486,7 +475,7 @@ BEGIN
 
   l1 := MakeText("This is a test.");
   Rewind(l1); FOR i := 1 TO 7 DO Advance(l1) END;
-  NEW(fa);  fa.fork := MakeText("not a test.");
+  NEW(fa);  fa.link := MakeText("not a test.");
   LinkedListAddAtom(l1(LinkedList), fa);
 
   l1 := MakeListWalker(l1); Rewind(l1);
@@ -504,7 +493,7 @@ BEGIN
 
   l1 := MakeText("This is not a test.");
   Rewind(l1); FOR i := 1 TO 7 DO Advance(l1) END;
-  NEW(fa);  fa.fork := MakeText("a test.");
+  NEW(fa);  fa.link := MakeText("a test.");
   LinkedListAddAtom(l1(LinkedList), fa);
 
   l1 := MakeListWalker(l1); Rewind(l1);
