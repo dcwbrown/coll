@@ -27,15 +27,15 @@ END Break;
 PROCEDURE Char*(c: CHAR);       BEGIN Out.Char(c);                     ChClass := 2 END Char;
 PROCEDURE NewLine*;             BEGIN Out.Ln;                          ChClass := 3 END NewLine;
 PROCEDURE Integer*(i: LONGINT); BEGIN Break(ChClass, 0); Out.Int(i,1); ChClass := 0 END Integer;
+PROCEDURE Hex*(i,n: LONGINT);   BEGIN Break(ChClass, 0); Out.Hex(i,n); ChClass := 0 END Hex;
 
 PROCEDURE NoBreak*;   BEGIN ChClass := 2                    END NoBreak;
 PROCEDURE StartLine*; BEGIN IF ChClass < 3 THEN NewLine END END StartLine;
 
-PROCEDURE StringLength*(VAR s: ARRAY OF CHAR): LONGINT;
-VAR l: INTEGER;
-BEGIN
-  l := 0; WHILE (l < LEN(s)) & (s[l] # 0X) DO INC(l) END;
-RETURN l END StringLength;
+PROCEDURE StringLength*(s: ARRAY OF CHAR): LONGINT;
+VAR result: LONGINT;
+BEGIN result := 0; WHILE (result < LEN(s)) & (s[result] # 0X) DO INC(result) END;
+RETURN result END StringLength;
 
 PROCEDURE String*(VAR s: ARRAY OF CHAR);
 VAR l: LONGINT;
@@ -44,8 +44,5 @@ BEGIN
   IF l > 0 THEN Break(ChClass, Classify(s[0])); Out.String(s); ChClass := Classify(s[l-1]) END
 END String;
 
-PROCEDURE StringNewLine*(VAR s: ARRAY OF CHAR);
-BEGIN String(s); NewLine
-END StringNewLine;
-
+BEGIN NoBreak;
 END TextWriter.

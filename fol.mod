@@ -139,8 +139,6 @@ RETURN result END MakeIntegerAtom;
 
 (* -------------------------------- Utility --------------------------------- *)
 
-PROCEDURE ^WriteList(l: List);
-
 PROCEDURE WriteAtom(a: Atom);
 BEGIN
   WITH
@@ -148,7 +146,7 @@ BEGIN
   | a: IntegerAtom   DO wi(a.int)
   | a: EndAtom       DO ws("<END>")
   | a: LinkAtom      DO ws("<link>") (*ws(".[."); WriteList(a.link); ws(".].")*)
-   | a: FunctionAtom  DO ws("<FUNCTION>")
+  | a: FunctionAtom  DO ws("<FUNCTION>")
   ELSE                  ws("<UNRECOGNISED>")
   END
 END WriteAtom;

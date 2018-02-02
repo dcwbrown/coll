@@ -6,7 +6,16 @@ PATH := /d/projects/oberon/vishap/master/install/bin:$(PATH)
 .PHONY: all
 .PHONY: clean
 
-all: fol.exe coll.exe PrefixMap.exe
+all: geli.exe fol.exe coll.exe PrefixMap.exe brace.exe folio.exe
+
+folio: folio.exe
+	-./folio.exe
+
+brace: brace.exe
+	-./brace.exe
+
+geli: geli.exe
+	-./geli.exe
 
 fol: fol.exe
 	-./fol.exe
@@ -18,7 +27,16 @@ prefixmap: PrefixMap.exe
 	./PrefixMap.exe
 
 %.o: %.mod
-	voc -r $^
+	voc -r -OC $^
+
+folio.exe: folio.mod TextWriter.o
+	voc -r -m -OC folio.mod
+
+brace.exe: brace.mod TextWriter.o
+	voc -r -M brace.mod
+
+geli.exe: geli.mod TextWriter.o
+	voc -r -M geli.mod
 
 fol.exe: fol.mod TextWriter.o
 	voc -r -M fol.mod
