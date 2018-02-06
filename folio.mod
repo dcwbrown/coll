@@ -48,7 +48,7 @@ TYPE
 VAR
    Abort: BOOLEAN;
    Stack: Node;
-   Store: Node;
+   Store: LinkNode;
 
 
 (* ----------------- TextWriter convenience functions ----------------------- *)
@@ -67,7 +67,10 @@ PROCEDURE space(i: LONGINT);     BEGIN WHILE i>0 DO ws("  "); DEC(i) END END spa
 (* ----------------- Error handling convenience functions ------------------- *)
 
 PROCEDURE Fail(msg: ARRAY OF CHAR);
-BEGIN wlc; ws("Internal error:"); wsl(msg); HALT(99)
+BEGIN
+  IF Strings.Length(msg) > 0 THEN wlc; ws("Internal error:"); wsl(msg)END;
+  wlc;
+  HALT(99)
 END Fail;
 
 PROCEDURE Assert(truth: BOOLEAN; msg: ARRAY OF CHAR);
@@ -103,82 +106,88 @@ BEGIN
   wsl(".")
 END DumpNode;
 
-PROCEDURE DumpListNodes(first: Node; depth: i64);
-VAR n: Node;
+PROCEDURE DumpListNodes(n: Node; depth: i64);
 BEGIN
-  n := first;
   WHILE n # NIL DO
     space(depth); DumpNode(n);
-    WITH n: LinkNode DO
+    IF n IS LinkNode THEN
       space(depth); wsl("[");
-      DumpListNodes(n.l, depth+1);
-      space(depth); wsl("]");
-    ELSE
+      DumpListNodes(n(LinkNode).l, depth+1);
+      space(depth); wsl("]")
     END;
     n := n.next
   END;
 END DumpListNodes;
 
 PROCEDURE DumpList(n: Node);
-VAR this, next: Node;
 BEGIN
-  this := n;
-  WHILE this # NIL DO
-    next := this.next; (* Default behavior *)
-    WITH
-      this: IntegerNode DO wc('<'); wi(this.i); wc('>')
-    | this: LinkNode    DO wc('['); DumpList(this.next); wc(']');
-                           next := this.l
-    ELSE ws("[#FAULTY#]");
-    END;
-    this := next;
+  WHILE n # NIL DO
+    IF n IS IntegerNode THEN
+      wc('<'); DumpInt(n(IntegerNode).i); wc('>'); n := n.next
+    ELSIF n IS LinkNode THEN
+      wc('['); DumpList(n(LinkNode).next); wc(']'); n := n(LinkNode).l
+    ELSE
+      ws("[#FAULTY#]"); n := n.next
+    END
   END;
 END DumpList;
 
 
 (* --------------------------- Node construction ---------------------------- *)
 
-PROCEDURE MakeInt(i: i64): IntegerNode;
-VAR result: IntegerNode;
-BEGIN NEW(result); result.i := i; RETURN result END MakeInt;
-
-PROCEDURE MakeLink(l: Node): LinkNode;
-VAR result: LinkNode;
-BEGIN NEW(result); result.l := l; RETURN result END MakeLink;
-
 PROCEDURE MakeCopy(n: Node): Node;
-VAR result: Node;
+VAR i: IntegerNode; l: LinkNode;
 BEGIN
   WITH
-    n: IntegerNode DO result := MakeInt(n.i)
-  | n: LinkNode DO    result := MakeLink(n.l)
+    n: IntegerNode DO NEW(i); i.i := n.i; RETURN i
+  | n: LinkNode DO    NEW(l); l.l := n.l; RETURN l
   ELSE                Fail("MakeCopy passed neither integer nor link node.")
-  END;
-RETURN result END MakeCopy;
+  END
+END MakeCopy;
 
 
 (* ------------------------------ Node stacking ----------------------------- *)
 
+PROCEDURE BreakBefore(n: Node);
+BEGIN IF (n # NIL) & (n.prev # NIL) THEN n.prev.next := NIL; n.prev := NIL END
+END BreakBefore;
+
+PROCEDURE Join(n1, n2: Node);
+(* Link n1 to n2 via n1.next and n2.prev.
+   If n1.next is already not nil, add a link node between n1 and n2
+   whose link references the old n1.next. *)
+VAR link: LinkNode;
+BEGIN
+  IF n2 # NIL THEN
+    IF n1.next # NIL THEN
+      NEW(link);
+      link.l  := n1.next;  n1.next.prev := link;
+      n1.next := link;     link.prev    := n1;
+      n1 := link;
+    END;
+    n1.next := n2; n2.prev := n1
+  END
+END Join;
+
 PROCEDURE Push(n: Node);
 VAR copy: Node;
-BEGIN
-  copy := MakeCopy(n);
-  IF Stack # NIL THEN Stack.prev := copy END;
-  copy.next := Stack;
-  Stack := copy;
+BEGIN copy := MakeCopy(n); Join(copy, Stack); Stack := copy;
 END Push;
 
 PROCEDURE Drop;
-BEGIN
-  Stack := Stack.next;
-  IF Stack # NIL THEN Stack.prev := NIL END
+BEGIN Stack := Stack.next; BreakBefore(Stack)
 END Drop;
 
-PROCEDURE Connect(list, newnode: Node);
+PROCEDURE Swap;
+VAR n1, n2, n3: Node;
 BEGIN
-  list.next := newnode;
-  newnode.prev := list
-END Connect;
+  n2 := Stack;  n1 := n2.next;  n3 := n1.next;
+  (* Relink in the order n1 n2 n3 *)
+  n1.prev := NIL;  n1.next := n2;
+  n2.prev := n1;   n2.next := n3;
+  IF n3 # NIL THEN n3.prev := n2 END;
+  Stack := n1;
+END Swap;
 
 
 (* ------------------------------- Intrinsics ------------------------------- *)
@@ -188,32 +197,60 @@ BEGIN n := n.next; Push(n);
 RETURN n.next END Constant;
 
 PROCEDURE Print;
-VAR top: Node;
 BEGIN
-  top := Stack;
-  WITH
-    top: IntegerNode DO wi(top.i)
-  | top: LinkNode    DO wc('['); DumpList(top.l); wc(']')
-  ELSE                    ws("[#FAULTY#]");
+  IF Stack IS IntegerNode THEN wi(Stack(IntegerNode).i)
+  ELSIF Stack IS LinkNode THEN wc('['); DumpList(Stack(LinkNode).l); wc(']')
+  ELSE ws("[#FAULTY#]")
   END;
   Drop;
 END Print;
 
-PROCEDURE Add;
-VAR top, next: Node; sum: i64;
+PROCEDURE AddIntToList(i: i64; n: Node);
 BEGIN
-  top  := Stack;
-  next := Stack.next;
-  sum  := 0;
-  WITH top: IntegerNode DO
-    WITH next: IntegerNode DO
-      next.i := top.i + next.i; Drop; RETURN
+  WHILE n # NIL DO
+    WITH n: IntegerNode DO INC(n.i, i)
+    ELSE AddIntToList(i, n(LinkNode).l)
+    END;
+    n := n.next
+  END
+END AddIntToList;
+
+PROCEDURE AddListToList(n1, n2: Node);
+BEGIN
+  WHILE (n1 # NIL) & (n2 # NIL) DO
+    IF n1 IS IntegerNode THEN
+      IF n2 IS IntegerNode THEN
+        INC(n2(IntegerNode).i, n1(IntegerNode).i)
+      ELSE (* n2 is link node *)
+        AddIntToList(n1(IntegerNode).i, n2(LinkNode).l)
+      END
+    ELSE (* n1 is link node *)
+      IF n2 IS IntegerNode THEN
+        AddIntToList(n2(IntegerNode).i, n1(LinkNode).l)
+      ELSE (* n2 is link node *)
+        AddListToList(n1(LinkNode).l, n2(LinkNode).l)
+      END
+    END;
+    n1 := n1.next;
+    n2 := n2.next
+  END
+END AddListToList;
+
+PROCEDURE Add;
+BEGIN
+  IF (Stack IS IntegerNode) = (Stack.next IS IntegerNode) THEN
+    IF Stack IS IntegerNode THEN
+      INC(Stack.next(IntegerNode).i, Stack(IntegerNode).i)
     ELSE
+      AddListToList(Stack(LinkNode).l, Stack.next(LinkNode).l)
     END
-  ELSE
+  ELSE (* One is int, one is list *)
+    IF Stack.next IS IntegerNode THEN Swap END;
+    AddIntToList(Stack(IntegerNode).i, Stack.next(LinkNode).l)
   END;
-  Drop; Drop; Push(MakeInt(0))
+  Drop
 END Add;
+
 
 PROCEDURE Intrinsic(n: IntegerNode): Node;
 VAR next: Node;
@@ -233,7 +270,7 @@ PROCEDURE Execute(n: Node);
 VAR next: Node;
 BEGIN
   WHILE n # NIL DO
-    next :=n.next; (* Default behavior *)
+    next := n.next; (* Default behavior *)
     WITH
       n: IntegerNode DO next := Intrinsic(n)
     | n: LinkNode    DO Push(n)
@@ -246,21 +283,20 @@ END Execute;
 
 (* --------------------------------- Store ---------------------------------- *)
 
-PROCEDURE MatchInt(store: Node; i: i64): Node;
+PROCEDURE MatchInt(n: Node; i: i64): Node;
 (* Returns the IntegerNode with value i that matches starting
   at n, or NIL if there is no match.
   If n is an IntegerNode it's a simple value test.
   If n is a LinkNode it's a recursive search for a match through
   both the .l and .next links. *)
-VAR n, result: Node;
-BEGIN n := store; result := NIL;
+VAR result: Node;
+BEGIN result := NIL;
   IF n # NIL THEN
-    WITH
-      n: IntegerNode DO
-        IF n.i = i THEN result := n END
-    | n: LinkNode DO
-        result := MatchInt(n.l, i);
-        IF result = NIL THEN result := MatchInt(n.next, i) END
+    IF (n IS IntegerNode) & (n(IntegerNode).i = i) THEN
+      result := n
+    ELSIF n IS LinkNode THEN
+      result := MatchInt(n(LinkNode).l, i);
+      IF result = NIL THEN result := MatchInt(n.next, i) END
     END
   END;
 RETURN result END MatchInt;
@@ -268,7 +304,7 @@ RETURN result END MatchInt;
 PROCEDURE MatchNode(store, list: Node): Node;
 BEGIN
   IF (list = NIL) OR ~(list IS IntegerNode) THEN RETURN NIL END;
-  WITH list: IntegerNode DO RETURN MatchInt(store, list.i) END
+  RETURN MatchInt(store, list(IntegerNode).i)
 END MatchNode;
 
 PROCEDURE MatchStore(VAR store, list: Node);
@@ -285,23 +321,6 @@ BEGIN
   END
 END MatchStore;
 
-PROCEDURE Join(n1, n2: Node);
-(* Link n1 to n2 via n1.next and n2.prev.
-   If n1.next is already not nil, add a link node between n1 and n2
-   whose link references the old n1.next. *)
-VAR link: LinkNode;
-BEGIN
-  IF n2 # NIL THEN
-    IF n1.next # NIL THEN
-      NEW(link);
-      link.l  := n1.next;  n1.next.prev := link;
-      n1.next := link;     link.prev    := n1;
-      n1 := link;
-    END;
-    n1.next := n2; n2.prev := n1
-  END
-END Join;
-
 PROCEDURE Save(n: Node);
 VAR s: Node;
 BEGIN
@@ -313,6 +332,14 @@ END Save;
 
 (* --------------------------------- Tests ---------------------------------- *)
 
+PROCEDURE MakeInt(i: i64): IntegerNode;
+VAR result: IntegerNode;
+BEGIN NEW(result); result.i := i; RETURN result END MakeInt;
+
+PROCEDURE MakeLink(l: Node): LinkNode;
+VAR result: LinkNode;
+BEGIN NEW(result); result.l := l; RETURN result END MakeLink;
+
 PROCEDURE StringToList(s: ARRAY OF CHAR): Node;
 VAR n1, n2, result: Node; i, l: i64;
 BEGIN
@@ -321,7 +348,7 @@ BEGIN
   l := Strings.Length(s);
   FOR i := 1 TO l-1 DO
     n2 := MakeInt(ORD(s[i]));
-    Connect(n1, n2);
+    Join(n1, n2);
     n1 := n2
   END;
 RETURN result END StringToList;
@@ -329,34 +356,49 @@ RETURN result END StringToList;
 PROCEDURE TestAddNode;
 VAR n1, n2, n3, n4: Node;
 BEGIN
-  wsl("Folio test.");
-  ws("SIZE(i64) "); wi(SIZE(i64)); wsl(".");
   wsl("MakeInt n1.");  n1 := MakeInt(48+1);
   wsl("MakeInt n3.");  n3 := MakeInt(48+2);
   wsl("MakeInt n4.");  n4 := MakeInt(48+3);
   wsl("MakeLink n2."); n2 := MakeLink(n4);
-  Connect(n1, n2);
-  Connect(n2, n3);
-  wsl("n1:"); DumpNode(n1);
-  wsl("n2:"); DumpNode(n2);
-  wsl("n3:"); DumpNode(n3);
-  wsl("n4:"); DumpNode(n4);
+  Join(n1, n2);
+  Join(n2, n3);
+  ws("n1:"); DumpNode(n1);
+  ws("n2:"); DumpNode(n2);
+  ws("n3:"); DumpNode(n3);
+  ws("n4:"); DumpNode(n4);
   DumpList(n1); wl;
 END TestAddNode;
+
+PROCEDURE VerifyLinks(first: Node);
+VAR n: Node;
+BEGIN n := first;
+  WHILE n # NIL DO
+    Assert((n.next = NIL) OR (n.next.prev = n), "n.next.prev = n");
+    WITH n: LinkNode DO
+      Assert((n.l = NIL) OR (n.l.prev = n), "n.l.prev = n");
+      VerifyLinks(n.l)
+    ELSE END;
+    n := n.next;
+  END
+END VerifyLinks;
 
 PROCEDURE TestExecute;
 VAR n1, n2, n3, n4, n5, n6: Node;
 BEGIN
-  n1 := MakeInt(CoreConstant);                     n2 := MakeInt(2); Connect(n1, n2);
-  n3 := MakeInt(CoreConstant); Connect(n2, n3); n4 := MakeInt(3); Connect(n3, n4);
-  n5 := MakeInt(CoreAdd);      Connect(n4, n5);
-  n6 := MakeInt(CorePrint);    Connect(n5, n6);
+  n1 := MakeInt(CoreConstant);
+  n2 := MakeInt(2);            Join(n1, n2);
+  n3 := MakeInt(CoreConstant); Join(n2, n3);
+  n4 := MakeInt(3);            Join(n3, n4);
+  n5 := MakeInt(CoreAdd);      Join(n4, n5);
+  n6 := MakeInt(CorePrint);    Join(n5, n6);
   DumpListNodes(n1,0); wl;
+  VerifyLinks(Stack);
   Execute(n1); wl;
+  VerifyLinks(Stack);
 END TestExecute;
 
 
-PROCEDURE PrintStore(first: Node; column: i64);
+PROCEDURE PrintStore(n: Node; column: i64);
 TYPE
   pending = POINTER TO pendingDesc;
   pendingDesc = RECORD
@@ -365,11 +407,9 @@ TYPE
     column: i64;
   END;
 VAR
-  n:        Node;
   stack, p: pending;
   i:        i64;
 BEGIN
-  n := first;
   stack := NIL;
   FOR i := 1 TO column DO wc(".") END;
   WHILE n # NIL DO
@@ -388,19 +428,6 @@ BEGIN
     stack := stack.next;
   END
 END PrintStore;
-
-PROCEDURE VerifyLinks(first: Node);
-VAR n: Node;
-BEGIN n := first;
-  WHILE n # NIL DO
-    Assert((n.next = NIL) OR (n.next.prev = n), "n.next.prev = n");
-    WITH n: LinkNode DO
-      Assert((n.l = NIL) OR (n.l.prev = n), "n.l.prev = n");
-      VerifyLinks(n.l)
-    ELSE END;
-    n := n.next;
-  END
-END VerifyLinks;
 
 PROCEDURE TestLookup(s: ARRAY OF CHAR);
 VAR store, key: Node;
@@ -435,8 +462,22 @@ BEGIN
   TestLookup("An");
 END TestStore;
 
-BEGIN Abort:=FALSE; Stack:=NIL; Store := MakeLink(NIL);
+PROCEDURE TestSwap;
+BEGIN
+  Push(MakeInt(1));
+  Push(MakeInt(2));
+  wsl("Before swap:"); DumpListNodes(Stack,2); VerifyLinks(Stack);
+  Swap;
+  wsl("After swap:");  DumpListNodes(Stack,2); VerifyLinks(Stack);
+END TestSwap;
+
+BEGIN Abort:=FALSE; Stack:=NIL; NEW(Store);
+  wsl("Folio test.");
+  IF SIZE(i64) # 8 THEN
+    ws("SIZE(i64) = "); wi(SIZE(i64)); ws(", must be 8."); Fail("")
+  END;
   TestAddNode;
   TestExecute;
   TestStore;
+  TestSwap;
 END folio.

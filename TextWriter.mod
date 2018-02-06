@@ -29,8 +29,8 @@ PROCEDURE NewLine*;             BEGIN Out.Ln;                          ChClass :
 PROCEDURE Integer*(i: LONGINT); BEGIN Break(ChClass, 0); Out.Int(i,1); ChClass := 0 END Integer;
 PROCEDURE Hex*(i,n: LONGINT);   BEGIN Break(ChClass, 0); Out.Hex(i,n); ChClass := 0 END Hex;
 
-PROCEDURE NoBreak*;   BEGIN ChClass := 2                    END NoBreak;
-PROCEDURE StartLine*; BEGIN IF ChClass < 3 THEN NewLine END END StartLine;
+PROCEDURE NoBreak*;   BEGIN ChClass := 2 END NoBreak;
+PROCEDURE StartLine*; BEGIN IF ChClass < 3 THEN NewLine END; Out.Flush END StartLine;
 
 PROCEDURE StringLength*(s: ARRAY OF CHAR): LONGINT;
 VAR result: LONGINT;
