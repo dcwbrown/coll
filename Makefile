@@ -1,85 +1,61 @@
 # Rule input $^, rule output $@
 
-PATH := /d/projects/oberon/vishap/master/install/bin:$(PATH)
+# Adapt to Windows executable name convention by defining XE (Executable extension)
 
+.SUFFIXES:
 
-.PHONY: all
-.PHONY: clean
+PROJECTS := geli fol coll PrefixMap brace folio hippo
 
-all: geli.exe fol.exe coll.exe PrefixMap.exe brace.exe folio.exe hippo.exe
+.PHONY: all clean
 
-hippo: hippo.exe
-	-./hippo.exe
+all: $(PROJECTS)
 
-folio: folio.exe
-	-./folio.exe
+ifdef WINDIR
+  XE=.exe
+  EXECUTABLES = $(PROJECTS:%=%.exe)
+  .PHONY: $(PROJECTS)
+  $(PROJECTS): %: %.exe
+  PATH := /d/projects/oberon/vishap/master/install/bin:$(PATH)
+else
+	XE=
+	EXECUTABLES = $(PROJECTS)
+	PATH := /opt/voc/bin:$(PATH)
+endif
 
-brace: brace.exe
-	-./brace.exe
-
-geli: geli.exe
-	-./geli.exe
-
-fol: fol.exe
-	-./fol.exe
-
-coll: coll.exe
-	mintty ./coll.exe
-
-prefixmap: PrefixMap.exe
-	./PrefixMap.exe
+prefixmap: PrefixMap$(XE)
+	./PrefixMap$(XE)
 
 %.o: %.mod
 	voc -r -OC $^
 
-hippo.exe: hippo.mod TextWriter.o
-	voc -r -m -OC hippo.mod
+hippo$(XE): hippo.mod TextWriter.o
+	voc -r -M -OC hippo.mod
+	-./hippo$(XE)
 
-folio.exe: folio.mod TextWriter.o
+folio$(XE): folio.mod TextWriter.o
 	voc -r -m -OC folio.mod
+	-./folio$(XE)
 
-brace.exe: brace.mod TextWriter.o
+brace$(XE): brace.mod TextWriter.o
 	voc -r -M brace.mod
+	-./brace$(XE)
 
-geli.exe: geli.mod TextWriter.o
+geli$(XE): geli.mod TextWriter.o
 	voc -r -M geli.mod
+	-./geli$(XE)
 
-fol.exe: fol.mod TextWriter.o
+fol$(XE): fol.mod TextWriter.o
 	voc -r -M fol.mod
+	-./fol$(XE)
 
-coll.exe: coll.mod
+coll$(XE): coll.mod
 	voc -r -m $^
+	mintty ./coll$(XE)
 
-PrefixMap.exe: PrefixMap.mod
+PrefixMap$(XE): PrefixMap.mod
 	voc -r -m $^
 
 clean:
-	rm -f *.exe *.c *.h *.o *.sym *.stackdump
-
-
-
-
-
-# # Rule input $^, rule output $@
-#
-# PATH := /d/projects/oberon/vishap/master/install/bin:$(PATH)
-#
-# target := coll
-#
-# .PHONY: all
-# .PHONY: clean
-#
-# all: $(target).exe
-# 	./$(target).exe
-#
-# sublime: $(target).exe
-# 	mintty ./$(target).exe
-#
-#
-# %.exe: %.mod
-# 	voc -r -m $^
-#
-# clean:
-# 	rm -f *.exe
+	rm -f *.c *.h *.o *.sym *.stackdump $(EXECUTABLES)
 
 
