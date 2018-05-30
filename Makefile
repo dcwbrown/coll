@@ -4,7 +4,7 @@
 
 .SUFFIXES:
 
-PROJECTS := geli fol coll PrefixMap brace folio hippo
+PROJECTS := geli fol coll PrefixMap brace folio hippo panda
 
 .PHONY: all clean
 
@@ -31,6 +31,10 @@ prefixmap: PrefixMap$(XE)
 hippo$(XE): hippo.mod TextWriter.o
 	voc -r -M -OC hippo.mod
 	-./hippo$(XE)
+
+panda$(XE): panda.mod TextWriter.o
+	voc -r -M -OC panda.mod
+	-./panda$(XE)
 
 folio$(XE): folio.mod TextWriter.o
 	voc -r -m -OC folio.mod
