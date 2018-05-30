@@ -21,10 +21,14 @@ IMPORT Strings, TextWriter, SYSTEM;
 
 CONST
   (* Intrinsic instructions *)
-  CoreFault    = 0;
-  CoreConstant = 1;
-  CorePrint    = 2;
-  CoreAdd      = 3;
+  DoFault     = 0;
+  DoNoOp      = 1;
+  DoHere      = 2;
+  DoPrint     = 3;
+  DoAdd       = 4;
+  DoSymbol    = 5;
+  DoDup       = 6;
+  DoParseNest = 7;
 
 
 TYPE
@@ -39,16 +43,20 @@ TYPE
   IntegerNode = POINTER TO IntegerNodeDesc;
   IntegerNodeDesc = RECORD (NodeDesc) i: i64  END;
 
+  InstructionNode = POINTER TO InstructionNodeDesc;
+  InstructionNodeDesc = RECORD (NodeDesc) i: i64  END;
+
   LinkNode = POINTER TO LinkNodeDesc;
   LinkNodeDesc = RECORD (NodeDesc) l: Node END;
 
-  GeneratorNodeDesc = RECORD (NodeDesc) (* todo *) END;
 
 
 VAR
-   Abort: BOOLEAN;
-   Stack: Node;
-   Store: LinkNode;
+   Abort:  BOOLEAN;
+   Stack:  Node;
+   Store:  LinkNode;
+   Input:  LinkNode;
+   Output: LinkNode;
 
 
 (* ----------------- TextWriter convenience functions ----------------------- *)
@@ -92,61 +100,126 @@ BEGIN
   END
 END DumpInt;
 
+PROCEDURE PrintInstruction(i: i64);
+BEGIN
+  CASE i OF
+  | DoFault:     ws("<Fault: intrinsic 0>")
+  | DoNoOp:      ws("<NoOp>")
+  | DoHere:      ws("<Here>")
+  | DoPrint:     ws("<Print>")
+  | DoAdd:       ws("<Add>")
+  | DoDup:       ws("<Dup>")
+  | DoParseNest: ws("<ParseNest>")
+  | DoSymbol:    ws("<Symbol>")
+  ELSE           ws("<undefined intrinsic>")
+  END;
+END PrintInstruction;
+
+
+(* Print list with integers used as chars where possible *)
+
+PROCEDURE PrintInt(i: i64);
+BEGIN
+  IF (i>=32) & (i<=126) THEN wc(CHR(i)) ELSE wc("<"); wi(i); wc(">") END
+END PrintInt;
+
+PROCEDURE PrintSymbol(n: Node);
+BEGIN
+  WHILE (n # NIL) & (n IS LinkNode) DO n := n.prev END;
+  IF n = NIL THEN RETURN END;
+  IF n.prev # NIL THEN PrintSymbol(n.prev) END;
+  WITH
+    n: IntegerNode     DO PrintInt(n.i)
+  | n: InstructionNode DO PrintInstruction(n.i)
+  ELSE ws("[#FAULTY#]")
+  END
+END PrintSymbol;
+
+PROCEDURE ^PrintList(n: Node);
+
+PROCEDURE PrintLink(l: Node);
+BEGIN wc('['); PrintList(l); wc(']')
+END PrintLink;
+
+PROCEDURE PrintList(n: Node);
+VAR i: i64;
+BEGIN
+  WHILE n # NIL DO
+    WITH
+      n: LinkNode        DO PrintLink(n.l)
+    | n: IntegerNode     DO PrintInt(n.i)
+    | n: InstructionNode DO
+      IF n.i = DoSymbol THEN
+        ws("<Symbol: "); PrintSymbol(n.prev); wc('>')
+      ELSE
+        PrintInstruction(n.i)
+      END
+    ELSE ws("[#FAULTY#]")
+    END;
+    n := n.next
+  END;
+END PrintList;
+
+(* Dump simple format multiple nodes per line *)
+
+PROCEDURE DumpList(n: Node);
+BEGIN
+  WHILE n # NIL DO
+    IF n IS LinkNode           THEN wc('['); DumpList(n(LinkNode).l); wc(']')
+    ELSIF n IS IntegerNode     THEN wc('<'); DumpInt(n(IntegerNode).i); wc('>')
+    ELSIF n IS InstructionNode THEN PrintInstruction(n(InstructionNode).i)
+    ELSE ws("[#FAULTY#]")
+    END;
+    n := n.next
+  END;
+END DumpList;
+
+(* Dump node details on a whole line. *)
+
 PROCEDURE DumpNode(n: Node);
 BEGIN
+  IF n = NIL THEN wsl("NIL."); RETURN END;
   ws("Node at "); wx(SYSTEM.VAL(i64, n),      16);
   ws(", prev: "); wx(SYSTEM.VAL(i64, n.prev), 16);
   ws(", next: "); wx(SYSTEM.VAL(i64, n.next), 16);
   ws(", is ");
   WITH
-    n: IntegerNode DO ws("integer, i: "); DumpInt(n.i)
-  | n: LinkNode    DO ws("link, l: "); wx(SYSTEM.VAL(i64, n.l), 16)
-  ELSE                ws("unknown")
+    n: IntegerNode     DO ws("integer, i: "); DumpInt(n.i)
+  | n: InstructionNode DO ws("instruction, i: "); wi(n.i); ws(" - "); PrintInstruction(n.i)
+  | n: LinkNode        DO ws("link, l: "); wx(SYSTEM.VAL(i64, n.l), 16)
+  ELSE                    ws("unknown")
   END;
   wsl(".")
 END DumpNode;
 
-PROCEDURE DumpListNodes(n: Node; depth: i64);
+PROCEDURE DumpNodeList(n: Node; depth: i64);
 BEGIN
   WHILE n # NIL DO
     space(depth); DumpNode(n);
     IF n IS LinkNode THEN
       space(depth); wsl("[");
-      DumpListNodes(n(LinkNode).l, depth+1);
+      DumpNodeList(n(LinkNode).l, depth+1);
       space(depth); wsl("]")
     END;
     n := n.next
   END;
-END DumpListNodes;
+END DumpNodeList;
 
-PROCEDURE DumpList(n: Node);
-BEGIN
-  WHILE n # NIL DO
-    IF n IS IntegerNode THEN
-      wc('<'); DumpInt(n(IntegerNode).i); wc('>'); n := n.next
-    ELSIF n IS LinkNode THEN
-      wc('['); DumpList(n(LinkNode).next); wc(']'); n := n(LinkNode).l
-    ELSE
-      ws("[#FAULTY#]"); n := n.next
-    END
-  END;
-END DumpList;
 
 
 (* --------------------------- Node construction ---------------------------- *)
 
 PROCEDURE MakeCopy(n: Node): Node;
-VAR i: IntegerNode; l: LinkNode;
+VAR i: IntegerNode; l: LinkNode; o: InstructionNode;
 BEGIN
   WITH
-    n: IntegerNode DO NEW(i); i.i := n.i; RETURN i
-  | n: LinkNode DO    NEW(l); l.l := n.l; RETURN l
-  ELSE                Fail("MakeCopy passed neither integer nor link node.")
+    n: IntegerNode     DO NEW(i); i.i := n.i; RETURN i
+  | n: InstructionNode DO NEW(o); o.i := n.i; RETURN o
+  | n: LinkNode        DO NEW(l); l.l := n.l; RETURN l
+  ELSE                    Fail("MakeCopy passed neither integer, instruction nor link node.")
   END
 END MakeCopy;
 
-
-(* ------------------------------ Node stacking ----------------------------- *)
 
 PROCEDURE BreakBefore(n: Node);
 BEGIN IF (n # NIL) & (n.prev # NIL) THEN n.prev.next := NIL; n.prev := NIL END
@@ -169,14 +242,15 @@ BEGIN
   END
 END Join;
 
+(* ------------------------------ Node stacking ----------------------------- *)
+
 PROCEDURE Push(n: Node);
 VAR copy: Node;
 BEGIN copy := MakeCopy(n); Join(copy, Stack); Stack := copy;
 END Push;
 
-PROCEDURE Drop;
-BEGIN Stack := Stack.next; BreakBefore(Stack)
-END Drop;
+PROCEDURE Dup;   BEGIN Push(Stack) END Dup;
+PROCEDURE Drop;  BEGIN Stack := Stack.next; BreakBefore(Stack) END Drop;
 
 PROCEDURE Swap;
 VAR n1, n2, n3: Node;
@@ -192,14 +266,17 @@ END Swap;
 
 (* ------------------------------- Intrinsics ------------------------------- *)
 
+(*
 PROCEDURE Constant(n: Node): Node;
 BEGIN n := n.next; Push(n);
 RETURN n.next END Constant;
+*)
 
 PROCEDURE Print;
 BEGIN
-  IF Stack IS IntegerNode THEN wi(Stack(IntegerNode).i)
-  ELSIF Stack IS LinkNode THEN wc('['); DumpList(Stack(LinkNode).l); wc(']')
+  IF    Stack IS IntegerNode     THEN wi(Stack(IntegerNode).i)
+  ELSIF Stack IS InstructionNode THEN PrintInstruction(Stack(InstructionNode).i)
+  ELSIF Stack IS LinkNode        THEN wc('['); DumpList(Stack(LinkNode).l); wc(']')
   ELSE ws("[#FAULTY#]")
   END;
   Drop;
@@ -252,31 +329,42 @@ BEGIN
 END Add;
 
 
-PROCEDURE Intrinsic(n: IntegerNode): Node;
+PROCEDURE MakeInstruction(i: i64): InstructionNode;
+VAR result: InstructionNode;
+BEGIN NEW(result); result.i := i; RETURN result END MakeInstruction;
+
+PROCEDURE MakeLink(l: Node): LinkNode;
+VAR result: LinkNode;
+BEGIN NEW(result); result.l := l; RETURN result END MakeLink;
+
+PROCEDURE ^ParseNest;
+
+PROCEDURE Intrinsic(n: InstructionNode): Node;
 VAR next: Node;
 BEGIN
   next := n.next; (* Default behavior *)
   (* ws("Intrinsic: "); wi(n.i); wsl('.'); *)
   CASE n.i OF
-  | CoreFault:    ws("Fault: intrinsic 0.")
-  | CoreConstant: next := Constant(n)
-  | CorePrint:    Print
-  | CoreAdd:      Add
+  | DoFault:     ws("Fault: intrinsic 0.")
+  | DoNoOp:
+  | DoHere:      wlc; wsl("Here!")
+  | DoPrint:     Print
+  | DoAdd:       Add
+  | DoDup:       Dup
+  | DoParseNest: ParseNest
+  | DoSymbol:    Push(MakeLink(n))
   ELSE Fail("Execute undefined intrinsic.")
   END;
 RETURN next END Intrinsic;
 
 PROCEDURE Execute(n: Node);
-VAR next: Node;
 BEGIN
   WHILE n # NIL DO
-    next := n.next; (* Default behavior *)
-    WITH
-      n: IntegerNode DO next := Intrinsic(n)
-    | n: LinkNode    DO Push(n)
-    ELSE                Fail("Execute encountered faulty node.")
-    END;
-    n := next;
+    IF n IS InstructionNode THEN
+      n := Intrinsic(n(InstructionNode))
+    ELSE
+      Push(n); n := n.next
+    END
   END
 END Execute;
 
@@ -330,35 +418,192 @@ BEGIN
 END Save;
 
 
+(* -------------------------------- Parsing --------------------------------- *)
+
+PROCEDURE IsWhiteSpace(n: Node): BOOLEAN;
+BEGIN RETURN (n IS IntegerNode) & (n(IntegerNode).i <= 32) END IsWhiteSpace;
+
+PROCEDURE IsAlphanumeric(n: Node): BOOLEAN;
+BEGIN
+  (* wsl("IsAlphanumericNode."); *)
+  WITH n: IntegerNode DO RETURN
+       (n.i >= ORD('0'))
+    & ((n.i <= ORD('9')) OR (n.i >= ORD('A')))
+    & ((n.i <= ORD('Z')) OR (n.i >= ORD('a')))
+    &  (n.i <= ORD('z'));
+  ELSE RETURN FALSE
+  END
+END IsAlphanumeric;
+
+PROCEDURE IsCharacter(n: Node; c: CHAR): BOOLEAN;
+BEGIN WITH n: IntegerNode DO RETURN n.i = ORD(c) ELSE RETURN FALSE END
+END IsCharacter;
+
+PROCEDURE MatchAnyInstruction(n: Node): Node;
+(* Returns an InstructionNode or NIL.
+  If n is an InstructioNode, returns that.
+  If n is an IntegerNode, returns NIL.
+  If n is a LinkNode it's a recursive search for an instruction node through
+  both the .l and .next links. *)
+VAR result: Node;
+BEGIN result := NIL;
+  (* wsl("Begin MatchAnyInstruction."); *)
+  IF n # NIL THEN
+    IF n IS InstructionNode THEN
+      result := n
+    ELSIF n IS LinkNode THEN
+      result := MatchAnyInstruction(n(LinkNode).l);
+      IF result = NIL THEN result := MatchAnyInstruction(n.next) END
+    END
+  END;
+RETURN result END MatchAnyInstruction;
+
+PROCEDURE ParseNest;
+VAR root: Node; depth: INTEGER;
+BEGIN
+  root := MakeLink(Input.l);
+  depth := 1;
+  WHILE (depth > 0) & (Input.l # NIL) DO
+    IF    IsCharacter(Input.l, '[') THEN INC(depth)
+    ELSIF IsCharacter(Input.l, ']') THEN DEC(depth);
+      IF depth <= 0 THEN BreakBefore(Input.l) END (* Disconnect ']' *)
+    END;
+    Input.l := Input.l.next
+  END;
+  IF Input.l # NIL THEN Join(root, Input.l) END;
+  Input.l := root;
+END ParseNest;
+
+PROCEDURE Parse;
+(* Lookup each integer in the list starting at Input.l
+   At end of each match check that the dictionary contains an
+     instruction and execute it.
+   Eat any white space.
+   Repeat.
+*)
+VAR s, end: Node;
+BEGIN
+  WHILE Input.l # NIL DO
+    IF Input.l IS LinkNode THEN
+      Push(Input.l); Input.l := Input.l.next
+    ELSIF Input.l IS InstructionNode THEN
+      Input.l := Intrinsic(Input.l(InstructionNode))
+    ELSIF Input.l IS IntegerNode THEN
+      IF Input.l(IntegerNode).i <= 32 THEN
+        Input.l := Input.l.next  (* Skip white space *)
+      ELSE
+        ws("Parsing: "); PrintList(Input.l); wl;
+        IF Input.l # NIL THEN
+          s := Store;
+          end := Input.l;
+          MatchStore(s, end);
+          (*
+          ws("MatchStore complete. s is "); DumpNode(s);
+          ws(" ... end is "); DumpNode(end);
+          *)
+
+          IF end = Input.l THEN  (* Didn't match anything at all. *)
+            wsl("Empty match.");
+            s := NIL;
+            IF ~IsAlphanumeric(end) THEN end := end.next
+            ELSE WHILE (end # NIL) & IsAlphanumeric(end) DO end := end.next END
+            END
+          END;
+
+          IF (end # NIL)       &  IsAlphanumeric(end)
+          &  (end.prev # NIL)  &  IsAlphanumeric(end.prev) THEN
+            (* If match stops between alphanumerics then it is not a proper match. *)
+            s := NIL;
+            (* Advance end to proper end of sequence of alphanumerics. *)
+            WHILE (end # NIL) & IsAlphanumeric(end) DO end := end.next END
+          END;
+
+          (* Is match position a valid end of match? *)
+          IF s # NIL THEN s := MatchAnyInstruction(s.next) END;
+
+          (* If no match then we'll be adding the new word to the store as a
+             symbol *)
+          IF s = NIL THEN
+            (* Temporarily use s to point to last character of new word, and
+               break input at end of new word. *)
+            IF end = NIL THEN
+              (* Need to scan through input to find the last character. *)
+              s := Input.l; WHILE s.next # NIL DO s := s.next END
+            ELSE
+              s := end.prev; s.next := NIL; end.prev := NIL
+            END;
+            (* ws("Add new symbol to store: "); PrintList(Input.l); wl; *)
+            (* Append a DoSymbol instruction to make this a symbol, then
+               add it to the store. *)
+            ws("No match, adding: '"); PrintList(Input.l); wsl("'.");
+            Join(s, MakeInstruction(DoSymbol));
+            Save(Input.l);
+            (* Exit with s addressing the DoSymbol instruction. *)
+            s := s.next;
+          END;
+          (* ws("Execute: "); DumpList(s); wl; *)
+          Input.l := end;  (* Advance over matched input *)
+          Execute(s);      (* s is allowed to advance input.l if it so chooses. *)
+        END
+      END
+    ELSE
+      wlc; wsl("Unexpected node type in Parse source.");
+      Input.l := Input.l.next;
+    END
+  END
+END Parse;
+
+
+
 (* --------------------------------- Tests ---------------------------------- *)
 
-PROCEDURE MakeInt(i: i64): IntegerNode;
+PROCEDURE MakeInteger(i: i64): IntegerNode;
 VAR result: IntegerNode;
-BEGIN NEW(result); result.i := i; RETURN result END MakeInt;
+BEGIN NEW(result); result.i := i; RETURN result END MakeInteger;
 
-PROCEDURE MakeLink(l: Node): LinkNode;
-VAR result: LinkNode;
-BEGIN NEW(result); result.l := l; RETURN result END MakeLink;
+(*
+PROCEDURE SubstringToList(s: ARRAY OF CHAR; VAR i: i64; l: i64): Node;
+VAR root, last, addition: Node;
+BEGIN
+  NEW(root); last := root;
+  WHILE (i<l) & (s[i] # ']') DO
+    IF s[i] = '[' THEN
+      INC(i);
+      addition := MakeLink(SubstringToList(s, i, l));
+      addition(LinkNode).l.prev := addition
+    ELSE
+      addition := MakeInteger(ORD(s[i]));
+      INC(i)
+    END;
+    Join(last, addition);
+    last := last.next
+  END;
+  IF i<l THEN INC(i) END; ( * Step over ']' * )
+RETURN root.next END SubstringToList;
 
 PROCEDURE StringToList(s: ARRAY OF CHAR): Node;
-VAR n1, n2, result: Node; i, l: i64;
+VAR i, l: i64;
+BEGIN i := 0; l := Strings.Length(s);
+RETURN SubstringToList(s, i, l) END StringToList;
+*)
+
+PROCEDURE StringToList(s: ARRAY OF CHAR): Node;
+VAR root, last: Node; i: i64;
 BEGIN
-  result := MakeInt(ORD(s[0]));
-  n1 := result;
-  l := Strings.Length(s);
-  FOR i := 1 TO l-1 DO
-    n2 := MakeInt(ORD(s[i]));
-    Join(n1, n2);
-    n1 := n2
+  NEW(root);  last := root;  i := 0;
+  WHILE (i<LEN(s)) & (s[i] # 0X) DO
+    Join(last, MakeInteger(ORD(s[i])));
+    last := last.next;
+    INC(i)
   END;
-RETURN result END StringToList;
+RETURN root.next END StringToList;
 
 PROCEDURE TestAddNode;
 VAR n1, n2, n3, n4: Node;
 BEGIN
-  wsl("MakeInt n1.");  n1 := MakeInt(48+1);
-  wsl("MakeInt n3.");  n3 := MakeInt(48+2);
-  wsl("MakeInt n4.");  n4 := MakeInt(48+3);
+  wsl("MakeInteger n1.");  n1 := MakeInteger(48+1);
+  wsl("MakeInteger n3.");  n3 := MakeInteger(48+2);
+  wsl("MakeInteger n4.");  n4 := MakeInteger(48+3);
   wsl("MakeLink n2."); n2 := MakeLink(n4);
   Join(n1, n2);
   Join(n2, n3);
@@ -383,15 +628,13 @@ BEGIN n := first;
 END VerifyLinks;
 
 PROCEDURE TestExecute;
-VAR n1, n2, n3, n4, n5, n6: Node;
+VAR n1, n2, n3, n4: Node;
 BEGIN
-  n1 := MakeInt(CoreConstant);
-  n2 := MakeInt(2);            Join(n1, n2);
-  n3 := MakeInt(CoreConstant); Join(n2, n3);
-  n4 := MakeInt(3);            Join(n3, n4);
-  n5 := MakeInt(CoreAdd);      Join(n4, n5);
-  n6 := MakeInt(CorePrint);    Join(n5, n6);
-  DumpListNodes(n1,0); wl;
+  n1 := MakeInteger(2);
+  n2 := MakeInteger(3);            Join(n1, n2);
+  n3 := MakeInstruction(DoAdd);    Join(n2, n3);
+  n4 := MakeInstruction(DoPrint);  Join(n3, n4);
+  DumpNodeList(n1,0); wl;
   VerifyLinks(Stack);
   Execute(n1); wl;
   VerifyLinks(Stack);
@@ -417,6 +660,7 @@ BEGIN
       n: IntegerNode DO
         IF (n.i > 31) & (n.i < 127) THEN wc(CHR(n.i)) ELSE wc("?") END;
         INC(column);
+    | n: InstructionNode DO PrintInstruction(n.i)
     | n: LinkNode DO
         NEW(p); p.node := n.l; p.column := column; p.next := stack; stack := p;
     END;
@@ -453,7 +697,9 @@ BEGIN
   Save(StringToList("The quick brown fox jumps over the lazy dog."));
   Save(StringToList("The little dog laughed to see such fun."));
   Save(StringToList("The dish ran away with the spoon."));
-  (* DumpListNodes(Store, 0); *)
+  Save(StringToList("A list with a [nested] part."));
+
+  (* DumpNodeList(Store, 0); *)
   VerifyLinks(Store);
   PrintStore(Store, 0);
   TestLookup("splurd");
@@ -464,14 +710,51 @@ END TestStore;
 
 PROCEDURE TestSwap;
 BEGIN
-  Push(MakeInt(1));
-  Push(MakeInt(2));
-  wsl("Before swap:"); DumpListNodes(Stack,2); VerifyLinks(Stack);
+  Push(MakeInteger(1));
+  Push(MakeInteger(2));
+  wsl("Before swap:"); DumpNodeList(Stack,2); VerifyLinks(Stack);
   Swap;
-  wsl("After swap:");  DumpListNodes(Stack,2); VerifyLinks(Stack);
+  wsl("After swap:");  DumpNodeList(Stack,2); VerifyLinks(Stack);
 END TestSwap;
 
-BEGIN Abort:=FALSE; Stack:=NIL; NEW(Store);
+PROCEDURE TestParse;
+VAR n1, n2, n3, n4, n5: Node;
+BEGIN
+  Store := NIL;
+  NEW(Store);
+  n1 := MakeInteger(ORD('h'));
+  n2 := MakeInteger(ORD('i'));   Join(n1,n2);
+  n3 := MakeInstruction(DoHere); Join(n2,n3);
+  Save(n1);
+  PrintStore(Store,0);
+
+  wsl("Test parse 'hi hi'");
+  Input.l := StringToList("hi hi"); Parse;
+  PrintStore(Store,0);
+
+  wsl("Test parse 'the cat sat hi on the cat [nested part] the cat'");
+  Stack := NIL;
+  wsl("Store before parse:"); PrintStore(Store,0);
+  Input.l := StringToList("the cat sat hi on the cat [nested part] the cat");
+  Parse;
+  ws("Stack: "); PrintList(Stack); wl;
+  wsl("Store: "); PrintStore(Store,0);
+
+
+  (* Test parsing of nests using folio definition of '[' *)
+  NEW(Store); Stack := NIL;
+
+  (* Define '[' *)
+  n1 := MakeInteger(ORD('[')); n2 := MakeInstruction(DoParseNest); Join(n1, n2);
+  Save(n1);
+  Input.l := StringToList("A [nested] test.");
+  Parse;
+  ws("Stack: "); PrintList(Stack); wl;
+  wsl("Store: "); PrintStore(Store,0);
+
+END TestParse;
+
+BEGIN Abort:=FALSE; Stack:=NIL; NEW(Store); NEW(Input); NEW(Output);
   wsl("Folio test.");
   IF SIZE(i64) # 8 THEN
     ws("SIZE(i64) = "); wi(SIZE(i64)); ws(", must be 8."); Fail("")
@@ -480,4 +763,5 @@ BEGIN Abort:=FALSE; Stack:=NIL; NEW(Store);
   TestExecute;
   TestStore;
   TestSwap;
+  TestParse;
 END folio.
