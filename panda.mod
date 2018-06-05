@@ -10,12 +10,18 @@ TYPE
   Link = POINTER TO LinkRec;  LinkRec = RECORD (AtomRec) link: Atom END;
   (*Func = POINTER TO FuncRec;  FuncRec = RECORD (AtomRec) func: Func END;*)
 
-AddState = RECORD
-  first: Atom;
-  curr:  Atom;
-  stack: Link;
-  esc:   BOOLEAN;
-END;
+  AddState = RECORD
+    first: Atom;
+    curr:  Atom;
+    stack: Link;
+    esc:   BOOLEAN;
+  END;
+
+  MatchState = RECORD
+    pattern: Atom;
+    key:     Atom;
+  END;
+
 
 
 VAR
@@ -82,46 +88,28 @@ END wt;
 PROCEDURE OpenNest(VAR state: AddState);
 VAR link: Link;
 BEGIN
-  wsl("Enter OpenNest.");
-  ws("Initial state.stack is "); wt(state.stack); wsl(".");
   NEW(link);
-  wsl("OpenNest 1.");
   link.next := state.stack;
-  wsl("OpenNest 2.");
   link.link := state.first;
-  wsl("OpenNest 3.");
   state.stack := link;
-  ws("OpenNest first push, state.stack.next is "); wt(state.stack.next); wsl(".");
   NEW(link); link.next := state.stack; link.link := state.curr;  state.stack := link;
-  ws("OpenNest second push, state.stack.next is "); wt(state.stack.next); wsl(".");
   NEW(state.first); state.curr := state.first;
-  wsl("Exit OpenNest.");
 END OpenNest;
 
 PROCEDURE CloseNest(VAR state: AddState);
 VAR link: Link;
 BEGIN
-  wsl("Enter CloseNest.");
   NEW(link);
   link.link := state.first.next;
-  wsl("CloseNest 1.");
   state.stack.link.next := link;
-  wsl("CloseNest 2.");
   state.curr := link;
-  wsl("CloseNest 3.");
   state.stack := state.stack.next(Link);
-  wsl("CloseNest 4.");
   state.first := state.stack.link;
-  wsl("CloseNest 5.");
   IF state.stack.next = NIL THEN
-    wsl("CloseNest 6a.");
     state.stack := NIL
   ELSE
-    wsl("CloseNest 6b.");
-    ws("  state.stack.next IS "); wfl; wt(state.stack.next); wsl(".");
     state.stack := state.stack.next(Link)
   END;
-  wsl("Exit CloseNest.");
 END CloseNest;
 
 PROCEDURE AddChar(VAR state: AddState; ch: CHAR);
@@ -152,16 +140,112 @@ RETURN state.first.next END AddText;
 PROCEDURE DisplayText(a: Atom);
 BEGIN
   WHILE a # NIL DO
-    IF a IS Code THEN wc(CHR(a(Code).code)) END;
+    IF    a IS Code THEN wc(CHR(a(Code).code))
+    ELSIF a IS Link THEN wc('['); DisplayText(a(Link).link); wc(']')
+    END;
     a := a.next;
   END
 END DisplayText;
 
+PROCEDURE MatchLiteral(VAR state: MatchState): BOOLEAN;
+VAR p, k: Atom;
+BEGIN
+  p := state.pattern;  k := state.key;
+  WHILE (p # NIL) & (p IS Code) & (k # NIL) DO
+    Assert(k IS Code, "k must be Code in MatchLiteral");
+    ws("MatchLiteral: p '"); wc(CHR(p(Code).code));
+    ws("', k '"); wc(CHR(k(Code).code)); wsl("'.");
+    IF p(Code).code = k(Code).code THEN
+      p := p.next;
+      k := k.next;
+    ELSE
+      RETURN FALSE
+    END
+  END;
+  IF (p = NIL) OR (p IS Link) THEN (* Matched whole pattern => success *)
+    state.pattern := p; state.key := k; RETURN TRUE
+  ELSE (* Partial match is no match *)
+    RETURN FALSE
+  END
+END MatchLiteral;
+
+PROCEDURE Find(VAR state: MatchState): BOOLEAN;
+VAR s, s2: MatchState;
+BEGIN
+  s := state;
+  WHILE (s.pattern # NIL) & (s.key # NIL) DO
+    Assert(s.pattern IS Code, "s.pattern must be Code in Find");
+    Assert(s.key IS Code, "s.key must be Code in Find");
+    ws("Find: s.pattern '"); wc(CHR(s.pattern(Code).code)); ws("', s.key '"); wc(CHR(s.key(Code).code)); wsl("'.");
+    CASE CHR(s.pattern(Code).code) OF
+      "'": (* Literal string *)
+            s.pattern := s.pattern.next;
+            IF MatchLiteral(s) THEN
+              state := s;
+              IF (state.key # NIL) & (state.pattern # NIL) & (state.pattern IS Link) THEN
+                state.pattern := state.pattern(Link).link;
+                RETURN Find(state)
+              ELSE
+                RETURN TRUE
+              END
+            ELSE
+              RETURN FALSE
+            END
+    | '/':  (* Alternates *)
+            s.pattern := s.pattern.next;
+            WHILE s.pattern # NIL DO
+              Assert(s.pattern IS Link, "s.pattern must be link in find alternates.");
+              s2 := s; s2.pattern := s.pattern(Link).link;
+              IF Find(s2) THEN
+                state := s2; RETURN TRUE
+              ELSE
+                s.pattern := s.pattern.next
+              END
+            END;
+            RETURN FALSE  (* Reached end of patterns without a match *)
+    ELSE Fail("Pattern did not start with ' or /.")
+    END
+  END
+END Find;
 
 (* -------------------------------- Startup --------------------------------- *)
 
+PROCEDURE Test;
+VAR
+  Root, TestRoot, TestKey, Programs, Data: Atom;
+  State: MatchState;
+BEGIN
+  DisplayText(AddText("The ^^cat sat [on the] mat.")); wl;
+
+  Root := AddText("/['root.[/['program.[/['e/[!emphasize]]['s/[strengthen]]]]['data[Hello [e/muchly] dave.]]]]");
+  DisplayText(Root); wl;
+
+  State.pattern := Root;
+  State.key     := AddText("root.program.");
+
+  IF Find(State) THEN
+    Programs := State.pattern(Link).link;
+    ws("Found programs: ");  DisplayText(Programs); wl;
+    State.pattern := Root;
+    State.key     := AddText("root.data");
+    IF Find(State) THEN
+      Data := State.pattern(Link).link;
+      ws("Found data: ");  DisplayText(Data); wl;
+    ELSE
+      wsl("'root.data' Not found.")
+    END;
+  ELSE
+    wsl("'root.program.'' Not found.")
+  END
+END Test;
+
 BEGIN
   Abort:=FALSE;
-  DisplayText(AddText("The ^^cat sat [on the] mat."));
-  wlc
+  Test;
+  wfl;
 END panda.
+
+
+TODO
+Match as mutch as possible and return pattern from that point. E.g. need to
+be able to match the 'e/' in 'e/muchly'.
