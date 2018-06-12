@@ -1,0 +1,17 @@
+/['root.
+  [/
+    ['program.
+      [/
+        ['e/
+          [!emphasize]
+        ]
+        ['s/
+          [strengthen]
+        ]
+      ]
+    ]
+    ['data
+      [Hello [e/muchly] dave.]
+    ]
+  ]
+]
