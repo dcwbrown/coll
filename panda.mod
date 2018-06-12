@@ -1,6 +1,6 @@
 MODULE panda;  (* panda - programs and nested data *)
 
-IMPORT Strings, TextWriter, SYSTEM;
+IMPORT Strings, Files, TextWriter, SYSTEM;
 
 TYPE
   Atom   = POINTER TO AtomRec;  AtomRec = RECORD next: Atom END;
@@ -208,16 +208,39 @@ BEGIN
   END
 END Find;
 
+
 (* -------------------------------- Startup --------------------------------- *)
+
+PROCEDURE ReadInitialText(VAR s: ARRAY OF CHAR);
+VAR f: Files.File;  r: Files.Rider;  i: INTEGER;
+BEGIN
+  f := Files.Old("panda.init");
+  Assert(f # NIL, "Could not read panda.init.");
+  Files.Set(r, f, 0);
+  i := 0;
+  WHILE ~r.eof DO
+    Files.Read(r, s[i]);
+    IF s[i] < ' ' THEN
+      (* Skip to next non spacing char *)
+      WHILE (~r.eof) & (s[i] <= ' ') DO Files.Read(r, s[i]) END;
+    END;
+    INC(i)
+  END;
+  s[i] := 0X
+END ReadInitialText;
+
 
 PROCEDURE Test;
 VAR
   Root, TestRoot, TestKey, Programs, Data: Atom;
   State: MatchState;
+  Init:  ARRAY 1000 OF CHAR;
 BEGIN
   DisplayText(AddText("The ^^cat sat [on the] mat.")); wl;
 
-  Root := AddText("/['root.[/['program.[/['e/[!emphasize]]['s/[strengthen]]]]['data[Hello [e/muchly] dave.]]]]");
+  (*Root := AddText("/['root.[/['program.[/['e/[!emphasize]]['s/[strengthen]]]]['data[Hello [e/muchly] dave.]]]]");*)
+  ReadInitialText(Init);
+  Root := AddText(Init);
   DisplayText(Root); wl;
 
   State.pattern := Root;
