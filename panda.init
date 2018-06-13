@@ -1,17 +1,13 @@
-/['root.
-  [/
-    ['program.
-      [/
-        ['e/
-          [!emphasize]
-        ]
-        ['s/
-          [strengthen]
-        ]
-      ]
-    ]
-    ['data
-      [Hello [e/muchly] dave.]
-    ]
-  ]
-]
+root.[[
+  program.[[
+    e/[@emphasize]
+  ][
+    s/[@strengthen]
+  ]]
+][
+  data.[[
+    test:Hello [e/muchly] dave.
+  ][
+    more:Some more text.
+  ]]
+]]

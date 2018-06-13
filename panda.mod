@@ -6,7 +6,7 @@ TYPE
   Atom   = POINTER TO AtomRec;  AtomRec = RECORD next: Atom END;
   Func   = PROCEDURE();
 
-  Code = POINTER TO CodeRec;  CodeRec = RECORD (AtomRec) code: INTEGER END;
+  Word = POINTER TO WordRec;  WordRec = RECORD (AtomRec) word: INTEGER END;
   Link = POINTER TO LinkRec;  LinkRec = RECORD (AtomRec) link: Atom END;
   (*Func = POINTER TO FuncRec;  FuncRec = RECORD (AtomRec) func: Func END;*)
 
@@ -61,11 +61,11 @@ END Error;
 (* --------------------------------- Panda ---------------------------------- *)
 
 PROCEDURE AddCharInternal(VAR state: AddState; ch: CHAR);
-VAR code: Code;
+VAR word: Word;
 BEGIN
-  NEW(code);  code.code := ORD(ch);
-  state.curr.next := code;
-  state.curr := code;
+  NEW(word);  word.word := ORD(ch);
+  state.curr.next := word;
+  state.curr := word;
 END AddCharInternal;
 
 
@@ -78,7 +78,7 @@ BEGIN
     ws("non-NIL");
     wfl;
     IF    a IS Link THEN ws(": Link")
-    ELSIF a IS Code THEN ws(": Code")
+    ELSIF a IS Word THEN ws(": Word")
     ELSIF a IS Atom THEN ws(": Atom")
     ELSE ws(": unknown") END;
     wfl;
@@ -137,10 +137,12 @@ BEGIN
   WHILE (i < LEN(s))  &  (s[i] # 0X) DO  AddChar(state, s[i]);  INC(i)  END;
 RETURN state.first.next END AddText;
 
+
+
 PROCEDURE DisplayText(a: Atom);
 BEGIN
   WHILE a # NIL DO
-    IF    a IS Code THEN wc(CHR(a(Code).code))
+    IF    a IS Word THEN wc(CHR(a(Word).word))
     ELSIF a IS Link THEN wc('['); DisplayText(a(Link).link); wc(']')
     END;
     a := a.next;
@@ -151,11 +153,11 @@ PROCEDURE MatchLiteral(VAR state: MatchState): BOOLEAN;
 VAR p, k: Atom;
 BEGIN
   p := state.pattern;  k := state.key;
-  WHILE (p # NIL) & (p IS Code) & (k # NIL) DO
-    Assert(k IS Code, "k must be Code in MatchLiteral");
-    ws("MatchLiteral: p '"); wc(CHR(p(Code).code));
-    ws("', k '"); wc(CHR(k(Code).code)); wsl("'.");
-    IF p(Code).code = k(Code).code THEN
+  WHILE (p # NIL) & (p IS Word) & (k # NIL) DO
+    Assert(k IS Word, "k must be Word in MatchLiteral");
+    ws("MatchLiteral: p '"); wc(CHR(p(Word).word));
+    ws("', k '"); wc(CHR(k(Word).word)); wsl("'.");
+    IF p(Word).word = k(Word).word THEN
       p := p.next;
       k := k.next;
     ELSE
@@ -169,44 +171,57 @@ BEGIN
   END
 END MatchLiteral;
 
-PROCEDURE Find(VAR state: MatchState): BOOLEAN;
+
+PROCEDURE ^FindString(VAR state: MatchState): BOOLEAN;
+
+PROCEDURE Interpret(VAR state: MatchState): BOOLEAN;
+VAR  c: CHAR;  s, s2: MatchState;
+BEGIN  wsl("Interpret.");
+  c := '/';  s := state;
+  IF s.pattern IS Word THEN
+    c := CHR(s.pattern(Word).word);
+    s.pattern := s.pattern.next;
+  END;
+  Assert(c = '/', "Only know how to interpret alternates.");
+  WHILE s.pattern # NIL DO
+    Assert(s.pattern IS Link, "pattern must be Link in Interpret");
+    s2.key := s.key;
+    s2.pattern := s.pattern(Link).link;
+    IF FindString(s2) THEN state := s2; RETURN TRUE END;
+    s.pattern := s.pattern.next
+  END;
+RETURN FALSE END Interpret;
+
+PROCEDURE FindString(VAR state: MatchState): BOOLEAN;
 VAR s, s2: MatchState;
-BEGIN
+BEGIN wsl("FindString.");
   s := state;
   WHILE (s.pattern # NIL) & (s.key # NIL) DO
-    Assert(s.pattern IS Code, "s.pattern must be Code in Find");
-    Assert(s.key IS Code, "s.key must be Code in Find");
-    ws("Find: s.pattern '"); wc(CHR(s.pattern(Code).code)); ws("', s.key '"); wc(CHR(s.key(Code).code)); wsl("'.");
-    CASE CHR(s.pattern(Code).code) OF
-      "'": (* Literal string *)
-            s.pattern := s.pattern.next;
-            IF MatchLiteral(s) THEN
-              state := s;
-              IF (state.key # NIL) & (state.pattern # NIL) & (state.pattern IS Link) THEN
-                state.pattern := state.pattern(Link).link;
-                RETURN Find(state)
-              ELSE
-                RETURN TRUE
-              END
-            ELSE
-              RETURN FALSE
-            END
-    | '/':  (* Alternates *)
-            s.pattern := s.pattern.next;
-            WHILE s.pattern # NIL DO
-              Assert(s.pattern IS Link, "s.pattern must be link in find alternates.");
-              s2 := s; s2.pattern := s.pattern(Link).link;
-              IF Find(s2) THEN
-                state := s2; RETURN TRUE
-              ELSE
-                s.pattern := s.pattern.next
-              END
-            END;
-            RETURN FALSE  (* Reached end of patterns without a match *)
-    ELSE Fail("Pattern did not start with ' or /.")
+    Assert(s.key IS Word, "s.key must be Word in FindString");
+    IF s.pattern IS Word THEN
+      ws("FindString: s.pattern '"); wc(CHR(s.pattern(Word).word)); ws("', s.key '"); wc(CHR(s.key(Word).word)); wsl("'.");
+      IF ~MatchLiteral(s) THEN RETURN FALSE END;
+      ws("MatchLiteral succeeded, s.pattern is ");
+      IF s.pattern # NIL THEN ws("not ") END;
+      ws("NIL, s.key is ");
+      IF s.key # NIL THEN ws("not ") END;
+      wsl("NIL.")
+    ELSIF s.pattern IS Link THEN
+      ws("FindString: s.key '"); wc(CHR(s.key(Word).word)); wsl("'.");
+      s2.pattern := s.pattern(Link).link;
+      s2.key := s.key;
+      IF ~Interpret(s2) THEN RETURN FALSE END;
+      IF s2.key = NIL THEN state := s2; RETURN TRUE END;
+      s.pattern := s.pattern.next
+    ELSE
+      Fail("s.pattern neither Word nor Link in FindString.")
     END
-  END
-END Find;
+  END;
+  IF s.key = NIL THEN state := s END;
+  ws("FindString returning, state.pattern is ");
+  IF state.pattern # NIL THEN ws("not ") END;
+  wsl("NIL.");
+RETURN s.key = NIL END FindString;
 
 
 (* -------------------------------- Startup --------------------------------- *)
@@ -246,12 +261,13 @@ BEGIN
   State.pattern := Root;
   State.key     := AddText("root.program.");
 
-  IF Find(State) THEN
+  IF FindString(State) THEN
+    Assert(State.pattern # NIL, "FindString returned pattern not expected to be NIL.");
     Programs := State.pattern(Link).link;
-    ws("Found programs: ");  DisplayText(Programs); wl;
+    wsl("Found programs: ");  DisplayText(Programs); wl;
     State.pattern := Root;
-    State.key     := AddText("root.data");
-    IF Find(State) THEN
+    State.key     := AddText("root.data.");
+    IF FindString(State) THEN
       Data := State.pattern(Link).link;
       ws("Found data: ");  DisplayText(Data); wl;
     ELSE
