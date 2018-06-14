@@ -146,46 +146,38 @@ END DisplayText;
 
 (* ------------------------------ Core engine ------------------------------- *)
 
-PROCEDURE ^FindString(VAR p, k: Atom): BOOLEAN;
-
-PROCEDURE Alternate(VAR p, k: Atom): BOOLEAN;
-VAR  p2, k2: Atom;
-BEGIN
-  WHILE p # NIL DO
-    Assert(p IS Link, "pattern must be Link in Alternate");
-    k2 := k;
-    p2 := p(Link).link;
-    IF FindString(p2, k2) THEN
-      p := p2;  k := k2;
-      RETURN TRUE
-    END;
-    p := p.next
-  END;
-RETURN FALSE END Alternate;
-
-
-PROCEDURE FindString(VAR p, k: Atom): BOOLEAN;
-VAR p2, k2: Atom;
-BEGIN
+PROCEDURE FindString(VAR p, k: Atom): INTEGER;
+VAR p2, p3, k2: Atom; c1, c2: INTEGER;
+BEGIN c1 := 0;
   WHILE (p # NIL) & (k # NIL) DO
     Assert(k IS Word, "k must be Word in FindString");
     IF p IS Word THEN
       IF p(Word).word = k(Word).word THEN
         p := p.next;
         k := k.next;
+        INC(c1)
       ELSE
-        RETURN FALSE
+        RETURN c1
       END
     ELSIF p IS Link THEN
-      p2 := p(Link).link;  k2 := k;
-      IF ~Alternate(p2, k2) THEN RETURN FALSE END;
-      IF k2 = NIL THEN p := p2; k := NIL; RETURN TRUE END;
-      p := p.next
+      p2 := p(Link).link;
+      WHILE p2 # NIL DO
+        Assert(p2 IS Link, "pattern must be Link in Alternate");
+        k2 := k;
+        p3 := p2(Link).link;
+        c2 := FindString(p3, k2);
+        IF c2 > 0 THEN
+          p := p3;  k := k2;  p2 := NIL
+        ELSE
+          p2 := p2.next
+        END
+      END;
+      RETURN c1 + c2
     ELSE
       Fail("p neither Word nor Link in FindString.")
     END
   END;
-RETURN k = NIL END FindString;
+RETURN c1 END FindString;
 
 
 (* -------------------------------- Startup --------------------------------- *)
@@ -209,36 +201,46 @@ BEGIN
 END ReadInitialText;
 
 
+
+PROCEDURE FindTest(pattern, key: Atom): Atom;
+VAR p, k: Atom; c: INTEGER;
+BEGIN
+  ws("FindTest, key: "); DisplayText(key); wl;
+  p := pattern;  k := key;
+  c := FindString(p, k);
+  ws("Find count = "); wi(c); ws(", ");
+  IF k = NIL THEN
+    wsl("found whole key.")
+  ELSIF k # key THEN
+    ws("found part key up to: "); DisplayText(k); wl;
+  ELSE
+    wsl("key not found.")
+  END;
+  IF k # key THEN
+    ws(".. p IS "); IF p = NIL THEN wsl("NIL.") ELSIF p IS Link THEN wsl("Link.") ELSE wsl("Word.") END;
+    ws(".. found data: ");  DisplayText(p); wl
+  END;
+  RETURN p
+END FindTest;
+
+
 PROCEDURE Test;
 VAR
-  Root, TestRoot, TestKey, Programs, Data, pattern, key: Atom;
+  Root, TestRoot, TestKey, Programs, Data, pattern, p, key, k: Atom;
   Init:  ARRAY 1000 OF CHAR;
 BEGIN
-  DisplayText(AddText("The ^^cat sat [on the] mat.")); wl;
-
-  (*Root := AddText("/['root.[/['program.[/['e/[!emphasize]]['s/[strengthen]]]]['data[Hello [e/muchly] dave.]]]]");*)
   ReadInitialText(Init);
   Root := AddText(Init);
   DisplayText(Root); wl;
 
-  pattern := Root;
-  key     := AddText("root.program.");
-
-  IF FindString(pattern, key) THEN
-    Assert(pattern # NIL, "FindString returned pattern not expected to be NIL.");
-    Programs := pattern(Link).link;
-    ws("Found programs: ");  DisplayText(Programs); wl;
-    pattern := Root;
-    key     := AddText("root.data.");
-    IF FindString(pattern, key) THEN
-      Data := pattern(Link).link;
-      ws("Found data: ");  DisplayText(Data); wl;
-    ELSE
-      wsl("'root.data' Not found.")
-    END;
-  ELSE
-    wsl("'root.program.'' Not found.")
-  END
+  Programs := FindTest(Root, AddText("root.program."));
+  Programs := FindTest(Root, AddText("root.prong."));
+  Programs := FindTest(Root, AddText("root.splunge."));
+  Programs := FindTest(Root, AddText("root.program.e/"));
+  Data     := FindTest(Root, AddText("root.data."));
+  Data     := FindTest(Root, AddText("root.da"));
+  Data     := FindTest(Root, AddText("root.data.fred"));
+  Data     := FindTest(Root, AddText("root.data.test:"));
 END Test;
 
 BEGIN
@@ -250,5 +252,5 @@ END panda.
 --------------------------------------------------------------------------------
 
 TODO
-Match as mutch as possible and return pattern from that point. E.g. need to
-be able to match the 'e/' in 'e/muchly'.
+
+Not handling string continuing after alternates match?
