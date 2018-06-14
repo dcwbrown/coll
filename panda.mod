@@ -17,12 +17,6 @@ TYPE
     esc:   BOOLEAN;
   END;
 
-  MatchState = RECORD
-    pattern: Atom;
-    key:     Atom;
-  END;
-
-
 
 VAR
   Abort: BOOLEAN;
@@ -149,79 +143,58 @@ BEGIN
   END
 END DisplayText;
 
-PROCEDURE MatchLiteral(VAR state: MatchState): BOOLEAN;
-VAR p, k: Atom;
-BEGIN
-  p := state.pattern;  k := state.key;
-  WHILE (p # NIL) & (p IS Word) & (k # NIL) DO
-    Assert(k IS Word, "k must be Word in MatchLiteral");
-    ws("MatchLiteral: p '"); wc(CHR(p(Word).word));
-    ws("', k '"); wc(CHR(k(Word).word)); wsl("'.");
-    IF p(Word).word = k(Word).word THEN
-      p := p.next;
-      k := k.next;
-    ELSE
-      RETURN FALSE
-    END
-  END;
-  IF (p = NIL) OR (p IS Link) THEN (* Matched whole pattern => success *)
-    state.pattern := p; state.key := k; RETURN TRUE
-  ELSE (* Partial match is no match *)
-    RETURN FALSE
-  END
-END MatchLiteral;
+PROCEDURE ^FindString(VAR pattern, key: Atom): BOOLEAN;
 
 
-PROCEDURE ^FindString(VAR state: MatchState): BOOLEAN;
-
-PROCEDURE Interpret(VAR state: MatchState): BOOLEAN;
-VAR  c: CHAR;  s, s2: MatchState;
-BEGIN  wsl("Interpret.");
-  c := '/';  s := state;
-  IF s.pattern IS Word THEN
-    c := CHR(s.pattern(Word).word);
-    s.pattern := s.pattern.next;
+PROCEDURE Interpret(VAR pattern, key: Atom): BOOLEAN;
+VAR  c: CHAR;  p, p2, k, k2: Atom;
+BEGIN (*wsl("Interpret.");*)
+  p := pattern;  k := key;  c := '/';
+  IF p IS Word THEN
+    c := CHR(p(Word).word);
+    p := p.next;
   END;
   Assert(c = '/', "Only know how to interpret alternates.");
-  WHILE s.pattern # NIL DO
-    Assert(s.pattern IS Link, "pattern must be Link in Interpret");
-    s2.key := s.key;
-    s2.pattern := s.pattern(Link).link;
-    IF FindString(s2) THEN state := s2; RETURN TRUE END;
-    s.pattern := s.pattern.next
+  WHILE p # NIL DO
+    Assert(p IS Link, "pattern must be Link in Interpret");
+    k2 := k;
+    p2 := p(Link).link;
+    IF FindString(p2, k2) THEN
+      pattern := p2;  key := k2;
+      RETURN TRUE
+    END;
+    p := p.next
   END;
 RETURN FALSE END Interpret;
 
-PROCEDURE FindString(VAR state: MatchState): BOOLEAN;
-VAR s, s2: MatchState;
-BEGIN wsl("FindString.");
-  s := state;
-  WHILE (s.pattern # NIL) & (s.key # NIL) DO
-    Assert(s.key IS Word, "s.key must be Word in FindString");
-    IF s.pattern IS Word THEN
-      ws("FindString: s.pattern '"); wc(CHR(s.pattern(Word).word)); ws("', s.key '"); wc(CHR(s.key(Word).word)); wsl("'.");
-      IF ~MatchLiteral(s) THEN RETURN FALSE END;
-      ws("MatchLiteral succeeded, s.pattern is ");
-      IF s.pattern # NIL THEN ws("not ") END;
-      ws("NIL, s.key is ");
-      IF s.key # NIL THEN ws("not ") END;
-      wsl("NIL.")
-    ELSIF s.pattern IS Link THEN
-      ws("FindString: s.key '"); wc(CHR(s.key(Word).word)); wsl("'.");
-      s2.pattern := s.pattern(Link).link;
-      s2.key := s.key;
-      IF ~Interpret(s2) THEN RETURN FALSE END;
-      IF s2.key = NIL THEN state := s2; RETURN TRUE END;
-      s.pattern := s.pattern.next
+
+PROCEDURE FindString(VAR pattern, key: Atom): BOOLEAN;
+VAR p, p2, k, k2: Atom;
+BEGIN
+  p := pattern;  k := key;
+  WHILE (p # NIL) & (k # NIL) DO
+    Assert(k IS Word, "k must be Word in FindString");
+    IF p IS Word THEN
+      IF p(Word).word = k(Word).word THEN
+        p := p.next;
+        k := k.next;
+      ELSE
+        RETURN FALSE
+      END
+    ELSIF p IS Link THEN
+      p2 := p(Link).link;  k2 := k;
+      IF ~Interpret(p2, k2) THEN RETURN FALSE END;
+      IF k2 = NIL THEN pattern := p2; key := NIL; RETURN TRUE END;
+      p := p.next
     ELSE
-      Fail("s.pattern neither Word nor Link in FindString.")
+      Fail("p neither Word nor Link in FindString.")
     END
   END;
-  IF s.key = NIL THEN state := s END;
-  ws("FindString returning, state.pattern is ");
-  IF state.pattern # NIL THEN ws("not ") END;
-  wsl("NIL.");
-RETURN s.key = NIL END FindString;
+  IF k = NIL THEN pattern := p;  key := NIL END;
+RETURN k = NIL END FindString;
+
+
+
 
 
 (* -------------------------------- Startup --------------------------------- *)
@@ -247,8 +220,7 @@ END ReadInitialText;
 
 PROCEDURE Test;
 VAR
-  Root, TestRoot, TestKey, Programs, Data: Atom;
-  State: MatchState;
+  Root, TestRoot, TestKey, Programs, Data, pattern, key: Atom;
   Init:  ARRAY 1000 OF CHAR;
 BEGIN
   DisplayText(AddText("The ^^cat sat [on the] mat.")); wl;
@@ -258,17 +230,17 @@ BEGIN
   Root := AddText(Init);
   DisplayText(Root); wl;
 
-  State.pattern := Root;
-  State.key     := AddText("root.program.");
+  pattern := Root;
+  key     := AddText("root.program.");
 
-  IF FindString(State) THEN
-    Assert(State.pattern # NIL, "FindString returned pattern not expected to be NIL.");
-    Programs := State.pattern(Link).link;
-    wsl("Found programs: ");  DisplayText(Programs); wl;
-    State.pattern := Root;
-    State.key     := AddText("root.data.");
-    IF FindString(State) THEN
-      Data := State.pattern(Link).link;
+  IF FindString(pattern, key) THEN
+    Assert(pattern # NIL, "FindString returned pattern not expected to be NIL.");
+    Programs := pattern(Link).link;
+    ws("Found programs: ");  DisplayText(Programs); wl;
+    pattern := Root;
+    key     := AddText("root.data.");
+    IF FindString(pattern, key) THEN
+      Data := pattern(Link).link;
       ws("Found data: ");  DisplayText(Data); wl;
     ELSE
       wsl("'root.data' Not found.")
@@ -284,6 +256,7 @@ BEGIN
   wfl;
 END panda.
 
+--------------------------------------------------------------------------------
 
 TODO
 Match as mutch as possible and return pattern from that point. E.g. need to
