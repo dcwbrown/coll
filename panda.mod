@@ -143,35 +143,30 @@ BEGIN
   END
 END DisplayText;
 
-PROCEDURE ^FindString(VAR pattern, key: Atom): BOOLEAN;
 
+(* ------------------------------ Core engine ------------------------------- *)
 
-PROCEDURE Interpret(VAR pattern, key: Atom): BOOLEAN;
-VAR  c: CHAR;  p, p2, k, k2: Atom;
-BEGIN (*wsl("Interpret.");*)
-  p := pattern;  k := key;  c := '/';
-  IF p IS Word THEN
-    c := CHR(p(Word).word);
-    p := p.next;
-  END;
-  Assert(c = '/', "Only know how to interpret alternates.");
+PROCEDURE ^FindString(VAR p, k: Atom): BOOLEAN;
+
+PROCEDURE Alternate(VAR p, k: Atom): BOOLEAN;
+VAR  p2, k2: Atom;
+BEGIN
   WHILE p # NIL DO
-    Assert(p IS Link, "pattern must be Link in Interpret");
+    Assert(p IS Link, "pattern must be Link in Alternate");
     k2 := k;
     p2 := p(Link).link;
     IF FindString(p2, k2) THEN
-      pattern := p2;  key := k2;
+      p := p2;  k := k2;
       RETURN TRUE
     END;
     p := p.next
   END;
-RETURN FALSE END Interpret;
+RETURN FALSE END Alternate;
 
 
-PROCEDURE FindString(VAR pattern, key: Atom): BOOLEAN;
-VAR p, p2, k, k2: Atom;
+PROCEDURE FindString(VAR p, k: Atom): BOOLEAN;
+VAR p2, k2: Atom;
 BEGIN
-  p := pattern;  k := key;
   WHILE (p # NIL) & (k # NIL) DO
     Assert(k IS Word, "k must be Word in FindString");
     IF p IS Word THEN
@@ -183,18 +178,14 @@ BEGIN
       END
     ELSIF p IS Link THEN
       p2 := p(Link).link;  k2 := k;
-      IF ~Interpret(p2, k2) THEN RETURN FALSE END;
-      IF k2 = NIL THEN pattern := p2; key := NIL; RETURN TRUE END;
+      IF ~Alternate(p2, k2) THEN RETURN FALSE END;
+      IF k2 = NIL THEN p := p2; k := NIL; RETURN TRUE END;
       p := p.next
     ELSE
       Fail("p neither Word nor Link in FindString.")
     END
   END;
-  IF k = NIL THEN pattern := p;  key := NIL END;
 RETURN k = NIL END FindString;
-
-
-
 
 
 (* -------------------------------- Startup --------------------------------- *)
