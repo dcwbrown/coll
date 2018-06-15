@@ -6,14 +6,14 @@ TYPE
   Atom   = POINTER TO AtomRec;  AtomRec = RECORD next: Atom END;
   Func   = PROCEDURE();
 
-  Word = POINTER TO WordRec;  WordRec = RECORD (AtomRec) word: INTEGER END;
-  Link = POINTER TO LinkRec;  LinkRec = RECORD (AtomRec) link: Atom END;
+  Val = POINTER TO ValRec;  ValRec = RECORD (AtomRec) val: INTEGER END;
+  Lnk = POINTER TO LnkRec;  LnkRec = RECORD (AtomRec) lnk: Atom END;
   (*Func = POINTER TO FuncRec;  FuncRec = RECORD (AtomRec) func: Func END;*)
 
   AddState = RECORD
     first: Atom;
     curr:  Atom;
-    stack: Link;
+    stack: Lnk;
     esc:   BOOLEAN;
   END;
 
@@ -55,11 +55,11 @@ END Error;
 (* --------------------------------- Panda ---------------------------------- *)
 
 PROCEDURE AddCharInternal(VAR state: AddState; ch: CHAR);
-VAR word: Word;
+VAR val: Val;
 BEGIN
-  NEW(word);  word.word := ORD(ch);
-  state.curr.next := word;
-  state.curr := word;
+  NEW(val);  val.val := ORD(ch);
+  state.curr.next := val;
+  state.curr := val;
 END AddCharInternal;
 
 
@@ -71,8 +71,8 @@ BEGIN
   ELSE
     ws("non-NIL");
     wfl;
-    IF    a IS Link THEN ws(": Link")
-    ELSIF a IS Word THEN ws(": Word")
+    IF    a IS Lnk THEN ws(": Lnk")
+    ELSIF a IS Val THEN ws(": Val")
     ELSIF a IS Atom THEN ws(": Atom")
     ELSE ws(": unknown") END;
     wfl;
@@ -80,29 +80,29 @@ BEGIN
 END wt;
 
 PROCEDURE OpenNest(VAR state: AddState);
-VAR link: Link;
+VAR lnk: Lnk;
 BEGIN
-  NEW(link);
-  link.next := state.stack;
-  link.link := state.first;
-  state.stack := link;
-  NEW(link); link.next := state.stack; link.link := state.curr;  state.stack := link;
+  NEW(lnk);
+  lnk.next := state.stack;
+  lnk.lnk := state.first;
+  state.stack := lnk;
+  NEW(lnk); lnk.next := state.stack; lnk.lnk := state.curr;  state.stack := lnk;
   NEW(state.first); state.curr := state.first;
 END OpenNest;
 
 PROCEDURE CloseNest(VAR state: AddState);
-VAR link: Link;
+VAR lnk: Lnk;
 BEGIN
-  NEW(link);
-  link.link := state.first.next;
-  state.stack.link.next := link;
-  state.curr := link;
-  state.stack := state.stack.next(Link);
-  state.first := state.stack.link;
+  NEW(lnk);
+  lnk.lnk := state.first.next;
+  state.stack.lnk.next := lnk;
+  state.curr := lnk;
+  state.stack := state.stack.next(Lnk);
+  state.first := state.stack.lnk;
   IF state.stack.next = NIL THEN
     state.stack := NIL
   ELSE
-    state.stack := state.stack.next(Link)
+    state.stack := state.stack.next(Lnk)
   END;
 END CloseNest;
 
@@ -136,8 +136,8 @@ RETURN state.first.next END AddText;
 PROCEDURE DisplayText(a: Atom);
 BEGIN
   WHILE a # NIL DO
-    IF    a IS Word THEN wc(CHR(a(Word).word))
-    ELSIF a IS Link THEN wc('['); DisplayText(a(Link).link); wc(']')
+    IF    a IS Val THEN wc(CHR(a(Val).val))
+    ELSIF a IS Lnk THEN wc('['); DisplayText(a(Lnk).lnk); wc(']')
     END;
     a := a.next;
   END
@@ -147,37 +147,45 @@ END DisplayText;
 (* ------------------------------ Core engine ------------------------------- *)
 
 PROCEDURE FindString(VAR p, k: Atom): INTEGER;
-VAR p2, p3, k2: Atom; c1, c2: INTEGER;
-BEGIN c1 := 0;
+VAR
+  p2: Atom;
+  ptest, ktest: Atom;  (* test alternative *)
+  pbest, kbest: Atom;  (* best alternative *)
+  count, ctest, cbest: INTEGER;
+BEGIN count := 0;
   WHILE (p # NIL) & (k # NIL) DO
-    Assert(k IS Word, "k must be Word in FindString");
-    IF p IS Word THEN
-      IF p(Word).word = k(Word).word THEN
+    Assert(k IS Val, "k must be Val in FindString");
+    IF p IS Val THEN
+      IF p(Val).val = k(Val).val THEN
         p := p.next;
         k := k.next;
-        INC(c1)
+        INC(count)
       ELSE
-        RETURN c1
+        RETURN count
       END
-    ELSIF p IS Link THEN
-      p2 := p(Link).link;
+    ELSIF p IS Lnk THEN
+      p2 := p(Lnk).lnk;
+      pbest := NIL;  kbest := NIL;  cbest := 0;
       WHILE p2 # NIL DO
-        Assert(p2 IS Link, "pattern must be Link in Alternate");
-        k2 := k;
-        p3 := p2(Link).link;
-        c2 := FindString(p3, k2);
-        IF c2 > 0 THEN
-          p := p3;  k := k2;  p2 := NIL
-        ELSE
-          p2 := p2.next
-        END
+        Assert(p2 IS Lnk, "pattern must be Lnk in Alternate");
+        ptest := p2(Lnk).lnk;
+        ktest := k;
+        ctest := FindString(ptest, ktest);
+        IF ctest > cbest THEN pbest := ptest;  kbest := ktest;  cbest := ctest END;
+        p2 := p2.next
       END;
-      RETURN c1 + c2
+      IF cbest > 0 THEN
+        IF pbest = NIL THEN p := p.next ELSE p := pbest END;
+        k := kbest;
+        INC(count, cbest)
+      ELSE
+        RETURN count
+      END
     ELSE
-      Fail("p neither Word nor Link in FindString.")
+      Fail("p neither Val nor Lnk in FindString.")
     END
   END;
-RETURN c1 END FindString;
+RETURN count END FindString;
 
 
 (* -------------------------------- Startup --------------------------------- *)
@@ -217,9 +225,10 @@ BEGIN
     wsl("key not found.")
   END;
   IF k # key THEN
-    ws(".. p IS "); IF p = NIL THEN wsl("NIL.") ELSIF p IS Link THEN wsl("Link.") ELSE wsl("Word.") END;
+    ws(".. p IS "); IF p = NIL THEN wsl("NIL.") ELSIF p IS Lnk THEN wsl("Lnk.") ELSE wsl("Val.") END;
     ws(".. found data: ");  DisplayText(p); wl
   END;
+  wl;
   RETURN p
 END FindTest;
 
@@ -235,12 +244,18 @@ BEGIN
 
   Programs := FindTest(Root, AddText("root.program."));
   Programs := FindTest(Root, AddText("root.prong."));
+  Programs := FindTest(Root, AddText("root.program2."));
+  Programs := FindTest(Root, AddText("root.prong2."));
   Programs := FindTest(Root, AddText("root.splunge."));
   Programs := FindTest(Root, AddText("root.program.e/"));
   Data     := FindTest(Root, AddText("root.data."));
   Data     := FindTest(Root, AddText("root.da"));
   Data     := FindTest(Root, AddText("root.data.fred"));
   Data     := FindTest(Root, AddText("root.data.test:"));
+  Data     := FindTest(Root, AddText("root.fred."));
+  Data     := FindTest(Root, AddText("root.fred.bert.george:"));
+  Data     := FindTest(Root, AddText("root.fred.harry.george:"));
+  Data     := FindTest(Root, AddText("root.fred.har.george:"));
 END Test;
 
 BEGIN

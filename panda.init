@@ -9,9 +9,15 @@ root.[[
     ng.[[hello]]
   ]]
 ][
+  program2.[[alpha]]
+][
+  prong2.[[bravo]]
+][
   data.[[
     test:Hello [e/muchly] dave.
   ][
     more:Some more text.
   ]]
+][
+  fred.[[bert][harry]].george:splurgle.
 ]]
