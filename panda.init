@@ -1,3 +1,4 @@
+[old.
 root.[[
   pro[[
     gram.[[
@@ -21,3 +22,40 @@ root.[[
 ][
   fred.[[bert][harry]].george:splurgle.
 ]]
+]
+
+
+root.[[[[[
+]pro[[
+ ]gram.[[
+  ]e/[emphasize]
+  ]s/[strengthen]
+ ]ng.hello
+]program2.alpha
+]prong2.bravo
+]data.[[
+ ]test:Hello [e/muchly] dave.
+ ]more:Some more text.
+]fred.[[
+ ]bert.george:splurgle
+ ]harry.georg:splurge
+
+
+
+
+
+root.
+  [pro
+    [gram.[e/[@emphasize]]s/[@strengthen]]
+    [ng.hello]
+  ]
+  [program2.alpha]
+  [prong2.bravo]
+  [data.
+    [test:Hello [e/muchly] dave.]
+    [more:Some more text.]
+  ]
+  fred.
+    [bert]
+    [harry]
+    .george:splurgle.

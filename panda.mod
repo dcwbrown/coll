@@ -188,6 +188,34 @@ BEGIN count := 0;
 RETURN count END FindString;
 
 
+PROCEDURE FindPrefix(VAR p, k: Atom): INTEGER;
+VAR plnk, klnk, pnxt, knxt: Atom; clnk, cnxt: INTEGER;
+BEGIN
+  IF (p = NIL) OR (k = NIL) THEN RETURN 0 END;
+  Assert(k IS Val, "k must be Val in FindPrefix");
+
+  IF p IS Val THEN
+    IF p(Val).val = k(Val).val THEN
+      p := p.next;  k := k.next;  RETURN FindPrefix(p, k) + 1;
+    ELSE
+      RETURN 0
+    END
+  ELSIF p IS Lnk THEN
+    (* Choose longer match of next or lnk fields. *)
+    plnk := p(Lnk).lnk;  klnk := k;  clnk := FindPrefix(plnk, klnk);
+    pnxt := p.next;      knxt := k;  cnxt := FindPrefix(pnxt, knxt);
+    IF clnk > cnxt THEN
+      k := klnk;  p := plnk;  RETURN clnk
+    ELSIF cnxt > 0 THEN
+      k := knxt;  p := pnxt;  RETURN cnxt
+    ELSE
+      RETURN 0
+    END
+  ELSE
+    Fail("p is neither Val nor Lnk in FindPrefix.");
+  END;
+RETURN 0 END FindPrefix;
+
 (* -------------------------------- Startup --------------------------------- *)
 
 PROCEDURE ReadInitialText(VAR s: ARRAY OF CHAR);
@@ -215,7 +243,8 @@ VAR p, k: Atom; c: INTEGER;
 BEGIN
   ws("FindTest, key: "); DisplayText(key); wl;
   p := pattern;  k := key;
-  c := FindString(p, k);
+  (*c := FindString(p, k);*)
+  c := FindPrefix(p, k);
   ws("Find count = "); wi(c); ws(", ");
   IF k = NIL THEN
     wsl("found whole key.")
@@ -248,6 +277,7 @@ BEGIN
   Programs := FindTest(Root, AddText("root.prong2."));
   Programs := FindTest(Root, AddText("root.splunge."));
   Programs := FindTest(Root, AddText("root.program.e/"));
+  Programs := FindTest(Root, AddText("root.program.s/"));
   Data     := FindTest(Root, AddText("root.data."));
   Data     := FindTest(Root, AddText("root.da"));
   Data     := FindTest(Root, AddText("root.data.fred"));
@@ -255,6 +285,7 @@ BEGIN
   Data     := FindTest(Root, AddText("root.fred."));
   Data     := FindTest(Root, AddText("root.fred.bert.george:"));
   Data     := FindTest(Root, AddText("root.fred.harry.george:"));
+  Data     := FindTest(Root, AddText("root.fred..george:"));
   Data     := FindTest(Root, AddText("root.fred.har.george:"));
 END Test;
 
