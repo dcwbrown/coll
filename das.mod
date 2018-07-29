@@ -7,6 +7,14 @@ TYPE
   Value = POINTER TO ValueRecord; ValueRecord = RECORD (AtomRecord) value: LONGINT END;
   Link  = POINTER TO LinkRecord;  LinkRecord  = RECORD (AtomRecord) link:  Atom END;
 
+  MatchState = POINTER TO MatchStateRecord;  MatchStateRecord = RECORD
+    isSequence:  BOOLEAN;
+    current:     Atom;
+    input:       Atom;
+    prevState:   MatchState;
+  END;
+
+
 VAR
   Abort: BOOLEAN;
 
@@ -22,6 +30,7 @@ VAR
   (*
   Store:        Atom;  ( * Current position in store e.g.during a search * )
   *)
+  State:        MatchState;
 
 (* ----------------- TextWriter convenience functions ----------------------- *)
 
@@ -35,6 +44,7 @@ PROCEDURE wlc;                   BEGIN TextWriter.StartLine              END wlc
 PROCEDURE wfl;                   BEGIN TextWriter.Flush                  END wfl;
 PROCEDURE wsl(s: ARRAY OF CHAR); BEGIN ws(s); wl                         END wsl;
 PROCEDURE space(i: LONGINT);     BEGIN WHILE i>0 DO ws("  "); DEC(i) END END space;
+PROCEDURE wb(b: BOOLEAN);        BEGIN IF b THEN ws("TRUE") ELSE ws("FALSE") END END wb;
 
 
 (* ----------------- Error handling convenience functions ------------------- *)
@@ -175,10 +185,56 @@ BEGIN
 END Step;
 
 
+(* -------------------------------- Matching ------------------------------ *)
+
+PROCEDURE MakeMatchState(prevState: MatchState; input, pattern: Atom): MatchState;
+VAR state: MatchState;
+BEGIN
+  Assert(pattern IS Value, "Nested match list must start with value");
+  NEW(state);
+  state.prevState  := prevState;
+  state.input      := input;
+  state.isSequence := pattern(Value).value = ORD('&');
+  state.current    := pattern.next;
+RETURN state END MakeMatchState;
+
+PROCEDURE Backtrack(VAR state: MatchState; matched: BOOLEAN);
+BEGIN
+  IF state.prevState = NIL THEN (* Exit from entire match *)
+    state.isSequence := matched;
+    state := NIL
+  ELSE
+    state := state.prevState;
+    IF matched = state.isSequence THEN
+      state.current := state.current.next;
+    ELSE (* Failure during sequence, or success of a choice *)
+      Backtrack(state, matched)
+    END
+  END
+END Backtrack;
+
+PROCEDURE MatchStep(VAR state: MatchState);
+VAR equal: BOOLEAN;
+BEGIN
+  IF state.current = NIL THEN  (* Reached end of list *)
+    Backtrack(state, state. isSequence)
+  ELSIF state.current IS Link THEN
+    state := MakeMatchState(state, state.input, state.current(Link).link)
+  ELSE  (* state.current IS Value *)
+    equal := state.current(Value).value = state.input(Value).value;
+    IF equal THEN state.input := state.input.next END;
+    IF state.isSequence = equal THEN  (* move to next in list *)
+      state.current := state.current.next;
+    ELSE  (* look no further in list *)
+      Backtrack(state, equal)
+    END
+  END
+END MatchStep;
+
 
 (* ----------------------------- Test harness ----------------------------- *)
 
-PROCEDURE Test;
+PROCEDURE TestNesting;
 BEGIN
   Root := CharsToList("* '[=?[ ']=?] n eu");
   Previous := Root;  WHILE Previous.next # NIL DO Previous := Previous.next END;
@@ -186,274 +242,41 @@ BEGIN
   Previous.next := Input;
   Program := Root;
   WHILE Program # NIL DO Step END;
-END Test;
+END TestNesting;
 
 
-
-
-BEGIN Test
-END das.
-
-
-
-
-
-
-
-
-
-PROCEDURE OpenNest(VAR state: AddState);
-VAR link: Link;
+PROCEDURE DumpState(state: MatchState);
 BEGIN
-  NEW(link);
-  link.next := state.stack;
-  link.link := state.first;
-  state.stack := link;
-  NEW(link); link.next := state.stack; link.link := state.curr;  state.stack := link;
-  NEW(state.first); state.curr := state.first;
-END OpenNest;
+  wsl("MatchState:");
+  ws("  isSequence: "); wb(state.isSequence); wl;
+  ws("  current:    "); wa(state.current); wl;
+  ws("  input:      "); wa(state.input); wl;
+END DumpState;
 
-PROCEDURE CloseNest(VAR state: AddState);
-VAR link: Link;
+PROCEDURE TestMatch(i, p: ARRAY OF CHAR);
+VAR state, startstate: MatchState;  input, pattern: Atom;
 BEGIN
-  NEW(link);
-  link.link := state.first.next;
-  state.stack.link.next := link;
-  state.curr := link;
-  state.stack := state.stack.next(Link);
-  state.first := state.stack.link;
-  IF state.stack.next = NIL THEN
-    state.stack := NIL
-  ELSE
-    state.stack := state.stack.next(Link)
-  END;
-END CloseNest;
-
-PROCEDURE AddChar(VAR state: AddState; ch: CHAR);
-BEGIN
-  IF state.esc THEN
-    AddCharInternal(state, ch);
-    state.esc := FALSE
-  ELSE
-    IF    ch = '^' THEN state.esc := TRUE
-    ELSIF ch = '[' THEN OpenNest(state)
-    ELSIF ch = ']' THEN CloseNest(state)
-    ELSE                AddCharInternal(state, ch)
-    END
-  END
-END AddChar;
-
-PROCEDURE AddText(s: ARRAY OF CHAR): Atom;
-VAR state: AddState; i: INTEGER;
-BEGIN
-  NEW(state.first);
-  state.curr  := state.first;
-  state.stack := NIL;
-  state.esc   := FALSE;
-  i := 0;
-  WHILE (i < LEN(s))  &  (s[i] # 0X) DO  AddChar(state, s[i]);  INC(i)  END;
-RETURN state.first.next END AddText;
-
-
-
-PROCEDURE DisplayText(a: Atom);
-BEGIN
-  WHILE a # NIL DO
-    IF    a IS Value THEN wc(CHR(a(Value).value))
-    ELSIF a IS Link THEN wc('['); DisplayText(a(Link).link); wc(']')
-    END;
-    a := a.next;
-  END
-END DisplayText;
-
-
-(* ------------------------------ Core engine ------------------------------- *)
-
-PROCEDURE FindString(VAR p, k: Atom): INTEGER;
-VAR
-  p2: Atom;
-  ptest, ktest: Atom;  (* test alternative *)
-  pbest, kbest: Atom;  (* best alternative *)
-  count, ctest, cbest: INTEGER;
-BEGIN count := 0;
-  WHILE (p # NIL) & (k # NIL) DO
-    Assert(k IS Value, "k must be Value in FindString");
-    IF p IS Value THEN
-      IF p(Value).value = k(Value).value THEN
-        p := p.next;
-        k := k.next;
-        INC(count)
-      ELSE
-        RETURN count
-      END
-    ELSIF p IS Link THEN
-      p2 := p(Link).link;
-      pbest := NIL;  kbest := NIL;  cbest := 0;
-      WHILE p2 # NIL DO
-        Assert(p2 IS Link, "pattern must be Link in Alternate");
-        ptest := p2(Link).link;
-        ktest := k;
-        ctest := FindString(ptest, ktest);
-        IF ctest > cbest THEN pbest := ptest;  kbest := ktest;  cbest := ctest END;
-        p2 := p2.next
-      END;
-      IF cbest > 0 THEN
-        IF pbest = NIL THEN p := p.next ELSE p := pbest END;
-        k := kbest;
-        INC(count, cbest)
-      ELSE
-        RETURN count
-      END
-    ELSE
-      Fail("p neither Value nor Link in FindString.")
-    END
-  END;
-RETURN count END FindString;
-
-
-PROCEDURE FindPrefix(VAR p, k: Atom): INTEGER;
-VAR plnk, klnk, pnxt, knxt: Atom; clnk, cnxt: INTEGER;
-BEGIN
-  IF (p = NIL) OR (k = NIL) THEN RETURN 0 END;
-  Assert(k IS Value, "k must be Value in FindPrefix");
-
-  IF p IS Value THEN
-    IF p(Value).value = k(Value).value THEN
-      p := p.next;  k := k.next;  RETURN FindPrefix(p, k) + 1;
-    ELSE
-      RETURN 0
-    END
-  ELSIF p IS Link THEN
-    (* Choose longer match of next or link fields. *)
-    plnk := p(Link).link;  klnk := k;  clnk := FindPrefix(plnk, klnk);
-    pnxt := p.next;      knxt := k;  cnxt := FindPrefix(pnxt, knxt);
-    IF clnk > cnxt THEN
-      k := klnk;  p := plnk;  RETURN clnk
-    ELSIF cnxt > 0 THEN
-      k := knxt;  p := pnxt;  RETURN cnxt
-    ELSE
-      RETURN 0
-    END
-  ELSE
-    Fail("p is neither Value nor Link in FindPrefix.");
-  END;
-RETURN 0 END FindPrefix;
-
-(* -------------------------------- Machine --------------------------------- *)
-
-(*
-  Context stack pops in this order
-    1) Saved input position
-    2) Program position to restore on failure
-    3) Program position to restore on success
-*)
-
-PROCEDURE Failure;  (* Backup to previous program position *)
-BEGIN
-  Input   := Context(Link).link;  Context := Context.next;
-  Program := Context(Link).link;  Context := Context.next.next;
-END Failure;
-
-PROCEDURE MatchAtom;
-BEGIN
-  IF Program IS Value THEN
-    Assert(Input IS Value, "Input must be value.");
-    IF Program(Value).value = Input(Value).value THEN
-      Input := Input.next;  Program = Program.next
-    ELSE
-      Failure
-    END
-  ELSE
-    Assert(Program IS Link, "Program must be Value or Link.");
-    IF Program(Link).link IS Value THEN
-      (* Execute list starting at Program.link *)
-      Enter(Program.next, ?, Input, 1);  Program := Progam(Link).link
-    ELSE
-      (* recursively test alternatives at Program.link.next and
-          Program.link.link.next *)
-
-    END
-  END
-END MatchAtom;
-
-(* -------------------------------- Startup --------------------------------- *)
-
-PROCEDURE ReadInitialText(VAR s: ARRAY OF CHAR);
-VAR f: Files.File;  r: Files.Rider;  i: INTEGER;
-BEGIN
-  f := Files.Old("das.init");
-  Assert(f # NIL, "Could not read das.init.");
-  Files.Set(r, f, 0);
-  i := 0;
-  WHILE ~r.eof DO
-    Files.Read(r, s[i]);
-    IF s[i] < ' ' THEN
-      (* Skip to next non spacing char *)
-      WHILE (~r.eof) & (s[i] <= ' ') DO Files.Read(r, s[i]) END;
-    END;
-    INC(i)
-  END;
-  s[i] := 0X
-END ReadInitialText;
-
-
-
-PROCEDURE FindTest(pattern, key: Atom): Atom;
-VAR p, k: Atom; c: INTEGER;
-BEGIN
-  ws("FindTest, key: "); DisplayText(key); wl;
-  p := pattern;  k := key;
-  (*c := FindString(p, k);*)
-  c := FindPrefix(p, k);
-  ws("Find count = "); wi(c); ws(", ");
-  IF k = NIL THEN
-    wsl("found whole key.")
-  ELSIF k # key THEN
-    ws("found part key up to: "); DisplayText(k); wl;
-  ELSE
-    wsl("key not found.")
-  END;
-  IF k # key THEN
-    ws(".. p IS "); IF p = NIL THEN wsl("NIL.") ELSIF p IS Link THEN wsl("Link.") ELSE wsl("Value.") END;
-    ws(".. found data: ");  DisplayText(p); wl
-  END;
+  ws("Test match input '"); ws(i); ws("', pattern '"); ws(p); wsl("'.");
+  input      := CharsToList(i);
+  pattern    := CharsToList(p);
+  state      := MakeMatchState(NIL, input, pattern);
+  startstate := state;
+  WHILE state # NIL DO DumpState(state); MatchStep(state) END;
+  ws("Matched: "); wb(startstate.isSequence); wsl(".");
   wl;
-  RETURN p
-END FindTest;
+END TestMatch;
 
-
-PROCEDURE Test;
-VAR
-  Root, TestRoot, TestKey, Programs, Data, pattern, p, key, k: Atom;
-  Init:  ARRAY 1000 OF CHAR;
+PROCEDURE TestMatching();
+VAR state, startstate: MatchState;  input, pattern: Atom;
 BEGIN
-  ReadInitialText(Init);
-  Root := AddText(Init);
-  DisplayText(Root); wl;
+  TestMatch("test", "&test");
+  TestMatch("test", "&toast");
+  TestMatch("t", "|tuv");
+  TestMatch("t", "|rst");
+  TestMatch("t", "|abc");
+END TestMatching;
 
-  Programs := FindTest(Root, AddText("root.program."));
-  Programs := FindTest(Root, AddText("root.prong."));
-  Programs := FindTest(Root, AddText("root.program2."));
-  Programs := FindTest(Root, AddText("root.prong2."));
-  Programs := FindTest(Root, AddText("root.splunge."));
-  Programs := FindTest(Root, AddText("root.program.e/"));
-  Programs := FindTest(Root, AddText("root.program.s/"));
-  Data     := FindTest(Root, AddText("root.data."));
-  Data     := FindTest(Root, AddText("root.da"));
-  Data     := FindTest(Root, AddText("root.data.fred"));
-  Data     := FindTest(Root, AddText("root.data.test:"));
-  Data     := FindTest(Root, AddText("root.fred."));
-  Data     := FindTest(Root, AddText("root.fred.bert.george:"));
-  Data     := FindTest(Root, AddText("root.fred.harry.george:"));
-  Data     := FindTest(Root, AddText("root.fred..george:"));
-  Data     := FindTest(Root, AddText("root.fred.har.george:"));
-END Test;
 
-BEGIN
-  Abort:=FALSE;
-  Test;
-  wfl;
+
+BEGIN TestNesting; TestMatching
 END das.
-
---------------------------------------------------------------------------------
-
