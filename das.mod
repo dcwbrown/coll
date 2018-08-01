@@ -27,9 +27,6 @@ VAR
   LocalStack:   Link;  (* Local stack *)
   LoopStack:    Link;
   Root:         Atom;  (* Root of globa store *)
-  (*
-  Store:        Atom;  ( * Current position in store e.g.during a search * )
-  *)
   State:        MatchState;
 
 (* ----------------- TextWriter convenience functions ----------------------- *)
@@ -94,19 +91,6 @@ BEGIN
   ELSE ws("link "); DebugOut(a); wc('.'); wfl
   END
 END wa;
-
-PROCEDURE CharsToList(s: ARRAY OF CHAR): Atom;
-VAR first,last,new: Value; i: INTEGER;
-BEGIN i := 0;
-  IF (i < LEN(s)) & (s[0] # 0X) THEN
-    NEW(first);  first.value := ORD(s[0]);  INC(i);
-    last := first;
-    WHILE (i < LEN(s)) & (s[i] # 0X) DO
-      NEW(new);  new.value := ORD(s[i]);
-      INC(i);  last.next := new;  last := new;
-    END
-  END;
-RETURN first END CharsToList;
 
 
 (* --------------------------------- das ---------------------------------- *)
@@ -204,6 +188,7 @@ BEGIN
     state.isSequence := matched;
     state := NIL
   ELSE
+    IF matched THEN state.prevState.input := state.input END;
     state := state.prevState;
     IF matched = state.isSequence THEN
       state.current := state.current.next;
@@ -234,6 +219,19 @@ END MatchStep;
 
 (* ----------------------------- Test harness ----------------------------- *)
 
+PROCEDURE CharsToList(s: ARRAY OF CHAR): Atom;
+VAR first,last,new: Value; i: INTEGER;
+BEGIN i := 0;
+  IF (i < LEN(s)) & (s[0] # 0X) THEN
+    NEW(first);  first.value := ORD(s[0]);  INC(i);
+    last := first;
+    WHILE (i < LEN(s)) & (s[i] # 0X) DO
+      NEW(new);  new.value := ORD(s[i]);
+      INC(i);  last.next := new;  last := new;
+    END
+  END;
+RETURN first END CharsToList;
+
 PROCEDURE TestNesting;
 BEGIN
   Root := CharsToList("* '[=?[ ']=?] n eu");
@@ -244,6 +242,17 @@ BEGIN
   WHILE Program # NIL DO Step END;
 END TestNesting;
 
+PROCEDURE NestedCharsToList(s: ARRAY OF CHAR): Atom;
+VAR l, p: Atom;
+BEGIN
+  NEW(l);
+  l.next := CharsToList(s);
+  Program := CharsToList("* '[=?[ ']=?] n eu");
+  Previous := l;
+  Input := l.next;
+  WHILE Program # NIL DO Step END;
+  RETURN l.next
+END NestedCharsToList;
 
 PROCEDURE DumpState(state: MatchState);
 BEGIN
@@ -253,27 +262,30 @@ BEGIN
   ws("  input:      "); wa(state.input); wl;
 END DumpState;
 
-PROCEDURE TestMatch(i, p: ARRAY OF CHAR);
+PROCEDURE TestMatch(expect: BOOLEAN; i, p: ARRAY OF CHAR);
 VAR state, startstate: MatchState;  input, pattern: Atom;
 BEGIN
   ws("Test match input '"); ws(i); ws("', pattern '"); ws(p); wsl("'.");
   input      := CharsToList(i);
-  pattern    := CharsToList(p);
+  pattern    := NestedCharsToList(p);
   state      := MakeMatchState(NIL, input, pattern);
   startstate := state;
   WHILE state # NIL DO DumpState(state); MatchStep(state) END;
   ws("Matched: "); wb(startstate.isSequence); wsl(".");
+  Assert(startstate.isSequence = expect, ".. expected opposite.");
   wl;
 END TestMatch;
 
 PROCEDURE TestMatching();
 VAR state, startstate: MatchState;  input, pattern: Atom;
 BEGIN
-  TestMatch("test", "&test");
-  TestMatch("test", "&toast");
-  TestMatch("t", "|tuv");
-  TestMatch("t", "|rst");
-  TestMatch("t", "|abc");
+  TestMatch(TRUE,  "test", "&test");
+  TestMatch(FALSE, "test", "&toast");
+  TestMatch(TRUE,  "t", "|tuv");
+  TestMatch(TRUE,  "t", "|rst");
+  TestMatch(FALSE, "t", "|abc");
+  TestMatch(TRUE,  "fred", "|[&bert][&fred][&harry]");
+  TestMatch(TRUE,  "fred", "&fr[|aeiou]d")
 END TestMatching;
 
 
