@@ -7,27 +7,21 @@ TYPE
   Value = POINTER TO ValueRecord; ValueRecord = RECORD (AtomRecord) value: LONGINT END;
   Link  = POINTER TO LinkRecord;  LinkRecord  = RECORD (AtomRecord) link:  Atom END;
 
-  MatchState = POINTER TO MatchStateRecord;  MatchStateRecord = RECORD
-    isSequence:  BOOLEAN;
-    current:     Atom;
-    input:       Atom;
-    prevState:   MatchState;
-  END;
-
 
 VAR
   Abort: BOOLEAN;
 
 (* ---------------------- Current match/execution state --------------------- *)
 
-  Input:        Atom;  (* Current input position *)
-  Previous:     Atom;  (* Previous input position. Previous.next usually = Input *)
-  Program:      Atom;  (* Current program position (intrinsic or link) *)
+  Input:        Atom;     (* Current input position *)
+  Previous:     Atom;     (* Previous input position. Previous.next usually = Input *)
+  Program:      Atom;     (* Current program position (intrinsic or link) *)
   ProgramStack: Link;
-  LocalStack:   Link;  (* Local stack *)
+  LocalStack:   Link;     (* Local stack *)
   LoopStack:    Link;
-  Root:         Atom;  (* Root of globa store *)
-  State:        MatchState;
+  Root:         Atom;     (* Root of global store *)
+  Match:        Atom;     (* Current match position *)
+  IsSequence:   BOOLEAN;  (* Whether matching sequence or alternates *)
 
 (* ----------------- TextWriter convenience functions ----------------------- *)
 
@@ -120,6 +114,11 @@ VAR a: Atom;
 BEGIN a := stack.link; Drop(stack);
 RETURN a END Pop;
 
+PROCEDURE PopBoolean(VAR stack: Link): BOOLEAN;
+VAR result: BOOLEAN;
+BEGIN result := stack.link(Value).value # 0;  Drop(stack);
+RETURN result END PopBoolean;
+
 PROCEDURE IsTrueAtom(a: Atom): BOOLEAN;
 BEGIN
   IF a = NIL THEN RETURN FALSE END;
@@ -171,50 +170,55 @@ END Step;
 
 (* -------------------------------- Matching ------------------------------ *)
 
-PROCEDURE MakeMatchState(prevState: MatchState; input, pattern: Atom): MatchState;
-VAR state: MatchState;
+PROCEDURE InitMatchList(pattern: Atom);
 BEGIN
-  Assert(pattern IS Value, "Nested match list must start with value");
-  NEW(state);
-  state.prevState  := prevState;
-  state.input      := input;
-  state.isSequence := pattern(Value).value = ORD('&');
-  state.current    := pattern.next;
-RETURN state END MakeMatchState;
+  IsSequence := pattern(Value).value = ORD("'");
+  Match := pattern.next;
+END InitMatchList;
 
-PROCEDURE Backtrack(VAR state: MatchState; matched: BOOLEAN);
+PROCEDURE Backtrack(matched: BOOLEAN);
+VAR prevInput: Atom;
 BEGIN
-  IF state.prevState = NIL THEN (* Exit from entire match *)
-    state.isSequence := matched;
-    state := NIL
+  IF LocalStack(Link).link = NIL THEN  (* Match is complete *)
+    Drop(LocalStack); PushBoolean(LocalStack, matched); Match := NIL
   ELSE
-    IF matched THEN state.prevState.input := state.input END;
-    state := state.prevState;
-    IF matched = state.isSequence THEN
-      state.current := state.current.next;
+    Match := Pop(LocalStack);
+    IF matched THEN Drop(LocalStack) ELSE Input := Pop(LocalStack) END;
+    IsSequence := PopBoolean(LocalStack);
+    IF matched = IsSequence THEN
+      Match := Match.next
     ELSE (* Failure during sequence, or success of a choice *)
-      Backtrack(state, matched)
+      Backtrack(matched)
     END
   END
 END Backtrack;
 
-PROCEDURE MatchStep(VAR state: MatchState);
+PROCEDURE MatchStep;
 VAR equal: BOOLEAN;
 BEGIN
-  IF state.current = NIL THEN  (* Reached end of list *)
-    Backtrack(state, state. isSequence)
-  ELSIF state.current IS Link THEN
-    state := MakeMatchState(state, state.input, state.current(Link).link)
-  ELSE  (* state.current IS Value *)
-    equal := state.current(Value).value = state.input(Value).value;
-    IF equal THEN state.input := state.input.next END;
-    IF state.isSequence = equal THEN  (* move to next in list *)
-      state.current := state.current.next;
+  IF Match = NIL THEN
+    Backtrack(IsSequence)
+  ELSIF Match IS Link THEN
+    PushBoolean(LocalStack, IsSequence);
+    PushAtom(LocalStack, Input);
+    PushAtom(LocalStack, Match);
+    InitMatchList(Match(Link).link)
+  ELSE
+    equal := Match(Value).value = Input(Value).value;
+    IF equal THEN Input := Input.next END;
+    IF (IsSequence = equal) & (Match.next # NIL) THEN  (* move to next in list *)
+      Match := Match.next
     ELSE  (* look no further in list *)
-      Backtrack(state, equal)
+      Backtrack(equal)
     END
-  END
+  END;
 END MatchStep;
+
+PROCEDURE StartMatch(pattern: Atom);
+BEGIN
+  PushAtom(LocalStack, NIL);
+  InitMatchList(pattern)
+END StartMatch;
 
 
 (* ----------------------------- Test harness ----------------------------- *)
@@ -254,38 +258,48 @@ BEGIN
   RETURN l.next
 END NestedCharsToList;
 
-PROCEDURE DumpState(state: MatchState);
-BEGIN
+(*
+PROCEDURE DumpState;
+VAR a: Atom;
+BEGIN a := LocalStack;
   wsl("MatchState:");
-  ws("  isSequence: "); wb(state.isSequence); wl;
-  ws("  current:    "); wa(state.current); wl;
-  ws("  input:      "); wa(state.input); wl;
+  ws("  isSequence:  "); wb(IsSequence); wl;
+  ws("  Match:       "); wa(Match); wl;
+  ws("  Input:       "); wa(Input); wl;
+  ws("  Local stack: "); wa(a); wl;
+  WHILE a # NIL DO  a := a.next;  ws("               "); wa(a); wl END
 END DumpState;
+*)
 
 PROCEDURE TestMatch(expect: BOOLEAN; i, p: ARRAY OF CHAR);
-VAR state, startstate: MatchState;  input, pattern: Atom;
+VAR matched: BOOLEAN;
 BEGIN
+  wl; wsl("----------");
   ws("Test match input '"); ws(i); ws("', pattern '"); ws(p); wsl("'.");
-  input      := CharsToList(i);
-  pattern    := NestedCharsToList(p);
-  state      := MakeMatchState(NIL, input, pattern);
-  startstate := state;
-  WHILE state # NIL DO DumpState(state); MatchStep(state) END;
-  ws("Matched: "); wb(startstate.isSequence); wsl(".");
-  Assert(startstate.isSequence = expect, ".. expected opposite.");
+  StartMatch(NestedCharsToList(p));
+  Input := CharsToList(i);
+
+  WHILE Match # NIL DO (*DumpState;*) MatchStep END;
+
+  (*ws("Match completion local stack: "); wa(LocalStack); wl;*)
+  matched := PopBoolean(LocalStack);
+  ws("Matched: "); wb(matched);
+  Assert(matched = expect, " .. expected opposite.");
+  wsl(" as expected.");
+  (*ws("Final "); DumpState;*)
   wl;
 END TestMatch;
 
 PROCEDURE TestMatching();
-VAR state, startstate: MatchState;  input, pattern: Atom;
 BEGIN
-  TestMatch(TRUE,  "test", "&test");
-  TestMatch(FALSE, "test", "&toast");
-  TestMatch(TRUE,  "t", "|tuv");
-  TestMatch(TRUE,  "t", "|rst");
-  TestMatch(FALSE, "t", "|abc");
-  TestMatch(TRUE,  "fred", "|[&bert][&fred][&harry]");
-  TestMatch(TRUE,  "fred", "&fr[|aeiou]d")
+  TestMatch(TRUE,  "test", "'test");
+  TestMatch(FALSE, "test", "'toast");
+  TestMatch(TRUE,  "t",    "/tuv");
+  TestMatch(TRUE,  "t",    "/rst");
+  TestMatch(FALSE, "t",    "/abc");
+  TestMatch(TRUE,  "test", "'te['s]t");
+  TestMatch(TRUE,  "fred", "/['bert]['fred]['harry]");
+  TestMatch(TRUE,  "fred", "'fr[/aeiou]d")
 END TestMatching;
 
 
