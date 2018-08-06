@@ -258,19 +258,6 @@ BEGIN
   RETURN l.next
 END NestedCharsToList;
 
-(*
-PROCEDURE DumpState;
-VAR a: Atom;
-BEGIN a := LocalStack;
-  wsl("MatchState:");
-  ws("  isSequence:  "); wb(IsSequence); wl;
-  ws("  Match:       "); wa(Match); wl;
-  ws("  Input:       "); wa(Input); wl;
-  ws("  Local stack: "); wa(a); wl;
-  WHILE a # NIL DO  a := a.next;  ws("               "); wa(a); wl END
-END DumpState;
-*)
-
 PROCEDURE TestMatch(expect: BOOLEAN; i, p: ARRAY OF CHAR);
 VAR matched: BOOLEAN;
 BEGIN
@@ -279,14 +266,12 @@ BEGIN
   StartMatch(NestedCharsToList(p));
   Input := CharsToList(i);
 
-  WHILE Match # NIL DO (*DumpState;*) MatchStep END;
+  WHILE Match # NIL DO MatchStep END;
 
-  (*ws("Match completion local stack: "); wa(LocalStack); wl;*)
   matched := PopBoolean(LocalStack);
   ws("Matched: "); wb(matched);
   Assert(matched = expect, " .. expected opposite.");
   wsl(" as expected.");
-  (*ws("Final "); DumpState;*)
   wl;
 END TestMatch;
 
