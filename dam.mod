@@ -22,6 +22,9 @@ VAR
   LoopStack:     AtomPtr;
   Input:         AtomPtr;
 
+  IsSequence: BOOLEAN;
+  Match:      AtomPtr;
+
 (* ---------------------- Current match/execution state --------------------- *)
 
 
@@ -240,6 +243,60 @@ END Step;
 
 
 
+(* -------------------------------- Matching ------------------------------ *)
+
+PROCEDURE InitMatchList(pattern: AtomPtr);
+BEGIN
+  IsSequence := Value(pattern) = ORD("'");
+  Match := Next(pattern);
+END InitMatchList;
+
+PROCEDURE Backtrack(matched: BOOLEAN);
+VAR prevInput: AtomPtr;
+BEGIN
+  IF Link(LocalStack) = NIL THEN  (* Match is complete *)
+    Drop(LocalStack); PushValue(LocalStack, BoolVal(matched)); Match := NIL
+  ELSE
+    Match := PopLink(LocalStack);
+    IF matched THEN Drop(LocalStack) ELSE Input := PopLink(LocalStack) END;
+    Assert(IsValue(LocalStack), "Expected Saved IsSequence value on local stack.");
+    IsSequence := Value(LocalStack) # 0;  Drop(LocalStack);
+    IF matched = IsSequence THEN
+      Match := Next(Match)
+    ELSE (* Failure during sequence, or success of a choice *)
+      Backtrack(matched)
+    END
+  END
+END Backtrack;
+
+PROCEDURE MatchStep;
+VAR equal: BOOLEAN;
+BEGIN
+  IF Match = NIL THEN
+    Backtrack(IsSequence)
+  ELSIF IsValue(Match) THEN
+    equal := Value(Match) = Value(Input);
+    IF equal THEN Input := Next(Input) END;
+    IF (IsSequence = equal) & (Next(Match) # NIL) THEN  (* move to next in list *)
+      Match := Next(Match)
+    ELSE  (* look no further in list *)
+      Backtrack(equal)
+    END
+  ELSE
+    PushValue(LocalStack, BoolVal(IsSequence));
+    PushLink(LocalStack, Input);
+    PushLink(LocalStack, Match);
+    InitMatchList(Link(Match))
+  END;
+END MatchStep;
+
+PROCEDURE StartMatch(pattern: AtomPtr);
+BEGIN
+  PushLink(LocalStack, NIL);
+  InitMatchList(pattern)
+END StartMatch;
+
+
 (* ----------------------------- Test harness ----------------------------- *)
 
 
@@ -280,107 +337,25 @@ BEGIN i := 0;
   END;
 RETURN first END CharsToList;
 
-PROCEDURE TestNesting;
-VAR DeNest, TestProg: AtomPtr;
+
+PROCEDURE NestedCharsToList(s: ARRAY OF CHAR): AtomPtr;
+VAR result: AtomPtr;
 BEGIN
-  DeNest   := CharsToList("* '[i=?[ ']i=?] $ eu");
-  TestProg := CharsToList("`[Testing]`[more]`.`[`x`] [`[nested]]");
-
-  ws("Before de-nesting, TestProg = "); DumpList(TestProg); wl;
-
-  Program := DeNest;  Input := TestProg;
+  Input   := CharsToList(s);
+  result  := Input;
+  Program := CharsToList("* '[i=?[ ']i=?] $ eu");
+  (*ws("Before de-nesting, result = "); DumpList(result); wl;*)
   WHILE Program # NIL DO Step END;
+  (*ws("After de-nesting, result = "); DumpList(result); wl;*)
+RETURN result  END NestedCharsToList;
 
-  ws("After de-nesting, TestProg = "); DumpList(TestProg); wl;
 
-
-  Program := TestProg;
+PROCEDURE TestNesting;
+BEGIN
+  Program := NestedCharsToList("`[Testing]`[more]`.`[`x`] [`[nested]] `[abc[def]ghi]");
   WHILE Program # NIL DO Step END;
 END TestNesting;
 
-
-BEGIN
-  Assert(SYSTEM.VAL(Address, NIL) = 0, "Expected NIL to be zero.");
-  InitMemory;
-  Free := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory));
-  (*TestNewAtom*)
-  TestNesting
-END dam.
-
-
-(* ============================= Earlier code ============================= *)
-
-
-
-
-
-(* -------------------------------- Matching ------------------------------ *)
-
-PROCEDURE InitMatchList(pattern: Atom);
-BEGIN
-  IsSequence := pattern(Value).value = ORD("'");
-  Match := pattern.next;
-END InitMatchList;
-
-PROCEDURE Backtrack(matched: BOOLEAN);
-VAR prevInput: Atom;
-BEGIN
-  IF LocalStack(AtomPtr).link = NIL THEN  (* Match is complete *)
-    Drop(LocalStack); PushBoolean(LocalStack, matched); Match := NIL
-  ELSE
-    Match := Pop(LocalStack);
-    IF matched THEN Drop(LocalStack) ELSE Input := Pop(LocalStack) END;
-    IsSequence := PopBoolean(LocalStack);
-    IF matched = IsSequence THEN
-      Match := Match.next
-    ELSE (* Failure during sequence, or success of a choice *)
-      Backtrack(matched)
-    END
-  END
-END Backtrack;
-
-PROCEDURE MatchStep;
-VAR equal: BOOLEAN;
-BEGIN
-  IF Match = NIL THEN
-    Backtrack(IsSequence)
-  ELSIF Match IS AtomPtr THEN
-    PushBoolean(LocalStack, IsSequence);
-    PushAtom(LocalStack, Input);
-    PushAtom(LocalStack, Match);
-    InitMatchList(Match(AtomPtr).link)
-  ELSE
-    equal := Match(Value).value = Input(Value).value;
-    IF equal THEN Input := Next(Input) END;
-    IF (IsSequence = equal) & (Match.next # NIL) THEN  (* move to next in list *)
-      Match := Match.next
-    ELSE  (* look no further in list *)
-      Backtrack(equal)
-    END
-  END;
-END MatchStep;
-
-PROCEDURE StartMatch(pattern: Atom);
-BEGIN
-  PushAtom(LocalStack, NIL);
-  InitMatchList(pattern)
-END StartMatch;
-
-
-(* ----------------------------- Test harness ----------------------------- *)
-
-
-PROCEDURE NestedCharsToList(s: ARRAY OF CHAR): Atom;
-VAR l, p: Atom;
-BEGIN
-  l := NewAtom();
-  l.next := CharsToList(s);
-  Program := CharsToList("* '[=?[ ']=?] $ eu");
-  Previous := l;
-  Input := l.next;
-  WHILE Program # NIL DO Step END;
-  RETURN l.next
-END NestedCharsToList;
 
 PROCEDURE TestMatch(expect: BOOLEAN; i, p: ARRAY OF CHAR);
 VAR matched: BOOLEAN;
@@ -392,14 +367,14 @@ BEGIN
 
   WHILE Match # NIL DO MatchStep END;
 
-  matched := PopBoolean(LocalStack);
+  matched := Value(LocalStack)#0;  Drop(LocalStack);
   ws("Matched: "); wb(matched);
   Assert(matched = expect, " .. expected opposite.");
   wsl(" as expected.");
   wl;
 END TestMatch;
 
-PROCEDURE TestMatching();
+PROCEDURE TestMatching;
 BEGIN
   TestMatch(TRUE,  "test", "'test");
   TestMatch(FALSE, "test", "'toast");
@@ -412,6 +387,10 @@ BEGIN
 END TestMatching;
 
 
-
-BEGIN TestNesting; TestMatching
+BEGIN
+  Assert(SYSTEM.VAL(Address, NIL) = 0, "Expected NIL to be zero.");
+  InitMemory;
+  Free := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory));
+  (*TestNewAtom*)
+  TestNesting;  TestMatching
 END dam.
