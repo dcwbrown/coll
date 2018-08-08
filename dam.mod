@@ -68,6 +68,8 @@ END DebugChar;
 
 (* ----------------------------- Atom access ------------------------------ *)
 
+PROCEDURE BoolVal(b: BOOLEAN): Address;
+BEGIN IF b THEN RETURN 1 ELSE RETURN 0 END END BoolVal;
 
 PROCEDURE IsValue(a: AtomPtr): BOOLEAN;
 BEGIN RETURN (a.next MOD 2) = 0 END IsValue;
@@ -166,20 +168,10 @@ VAR l: AtomPtr;
 BEGIN l := NewAtom();  SetValue(l, v);  SetNext(l, stack);  stack := l
 END PushValue;
 
-PROCEDURE PushBoolean(VAR stack: AtomPtr; b: BOOLEAN);
-BEGIN IF b THEN PushValue(stack, 1) ELSE PushValue(stack, 0) END
-END PushBoolean;
-
 PROCEDURE Drop(VAR stack: AtomPtr);
 VAR unwanted: AtomPtr;
 BEGIN unwanted := stack;  stack := Next(stack);  FreeAtom(unwanted)
 END Drop;
-
-PROCEDURE PopAtom(VAR stack: AtomPtr): AtomPtr;
-VAR result: AtomPtr;
-BEGIN result := stack;  stack := Next(stack); SetNext(result, NIL);
-RETURN result END PopAtom;
-
 
 PROCEDURE PopLink(VAR stack: AtomPtr): AtomPtr;
 VAR result: AtomPtr;
@@ -187,33 +179,8 @@ BEGIN Assert(~IsValue(stack), "Cannot pop link when top of stcak is value.");
   result := Link(stack);  Drop(stack);
 RETURN result END PopLink;
 
-PROCEDURE PopValue(VAR stack: AtomPtr): Address;
-VAR result: Address;
-BEGIN Assert(IsValue(stack), "Cannot pop value when top of stcak is link.");
-  result := Value(stack);  Drop(stack);
-RETURN result END PopValue;
-
-PROCEDURE PopBoolean(VAR stack: AtomPtr): BOOLEAN;
-BEGIN RETURN PopValue(stack) # 0 END PopBoolean;
-
 
 (* ---------------------------- Atom functions ---------------------------- *)
-
-PROCEDURE IsTrueAtom(a: AtomPtr): BOOLEAN;
-BEGIN
-  (*wsl("IsTrueAtom.");*)
-  IF a = NIL THEN RETURN FALSE END;
-  RETURN a.value # 0
-END IsTrueAtom;
-
-PROCEDURE AreEqualAtoms(a1, a2: AtomPtr): BOOLEAN;
-BEGIN
-  (*
-  ws("AreEqualAtoms a1 = '"); DebugOut(a1);
-  ws("', a2 = '"); DebugOut(a2); wsl("'.");
-  *)
-  RETURN (IsValue(a1) = IsValue(a2)) & (a1.value = a2.value)
-END AreEqualAtoms;
 
 
 (* ----------------------------- Interpreter ------------------------------ *)
@@ -229,28 +196,31 @@ BEGIN
     CASE CHR(intrinsic) OF
       " ": (* No op   *)
     | "'": (* Literal *) PushAtom(LocalStack, n);  n := Next(n)
-    | "=": (* IsEqual *) PushBoolean(LocalStack, AreEqualAtoms(Input, PopAtom(LocalStack)))
-    | '?': (* If      *) IF ~IsTrueAtom(LocalStack) THEN n := Next(n) END; Drop(LocalStack)
+    | "=": (* Equal   *) a := Next(LocalStack);
+                         SetValue(a, BoolVal(
+                           (IsValue(LocalStack) = IsValue(a))
+                         & (LocalStack.value    = (a.value))
+                         ));
+                         Drop(LocalStack)
+    | '?': (* If      *) IF LocalStack.value = 0 THEN n := Next(n) END; Drop(LocalStack)
     | '[': (* Open    *) PushLink(LocalStack, Input)
     | ']': (* Close   *) a := PopLink(LocalStack);
-                         SetLink(a, Next(a));
-                         SetNext(a, Next(Input));
-                         FreeAtom(Input);
-                         Input := a
+                         SetLink(a, Next(a));  SetNext(a, Next(Input));
+                         FreeAtom(Input);  Input := a
     | '*': (* Loop    *) PushLink(LoopStack, n)
-    | 'n': (* Next    *) Assert(Input # NIL, "Next: Input cannot be NIL.");
-                         (* Special case handling to set NIL at end of nesting *)
+    | 'i': (* Input   *) PushAtom(LocalStack, Input)
+    | '$': (* Next    *) (* Special case input advance for de-nest program:
+                            advances 'Input' pointer, but breaks the input
+                            list before any ']'. *)
+                         Assert(Input # NIL, "Next: Input cannot be NIL.");
                          a := Next(Input);
                          IF (a # NIL) & IsValue(a) & (Value(a) = ORD(']')) THEN
                            SetNext(Input, NIL)
                          END;
                          Input := a
-    | 'e': (* Eof     *) PushBoolean(LocalStack, Input = NIL)
-    | 'u': (* Until   *) IF IsTrueAtom(LocalStack) THEN
-                           Drop(LoopStack)
-                         ELSE
-                           n := Link(LoopStack)
-                         END;
+    | 'e': (* Eof     *) PushValue(LocalStack, BoolVal(Input = NIL))
+    | 'u': (* Until   *) IF LocalStack.value # 0
+                           THEN Drop(LoopStack) ELSE n := Link(LoopStack) END;
                          Drop(LocalStack)
     | '`': (* Debug   *) DebugOut(n);  wl;  n := Next(n)
     ELSE Fail("Unrecognised intrinsic code.")
@@ -313,7 +283,7 @@ RETURN first END CharsToList;
 PROCEDURE TestNesting;
 VAR DeNest, TestProg: AtomPtr;
 BEGIN
-  DeNest   := CharsToList("* '[=?[ ']=?] n eu");
+  DeNest   := CharsToList("* '[i=?[ ']i=?] $ eu");
   TestProg := CharsToList("`[Testing]`[more]`.`[`x`] [`[nested]]");
 
   ws("Before de-nesting, TestProg = "); DumpList(TestProg); wl;
@@ -405,7 +375,7 @@ VAR l, p: Atom;
 BEGIN
   l := NewAtom();
   l.next := CharsToList(s);
-  Program := CharsToList("* '[=?[ ']=?] n eu");
+  Program := CharsToList("* '[=?[ ']=?] $ eu");
   Previous := l;
   Input := l.next;
   WHILE Program # NIL DO Step END;
