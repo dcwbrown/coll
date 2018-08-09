@@ -20,10 +20,13 @@ VAR
   Program:       AtomPtr;
   ProgramStack:  AtomPtr;
   LoopStack:     AtomPtr;
-  Input:         AtomPtr;
 
-  IsSequence: BOOLEAN;
-  Match:      AtomPtr;
+  InputTemp:         AtomPtr;
+
+  (* Standard global variables *)
+  Input:         AtomPtr;
+  Pattern:       AtomPtr;
+  Sequence:      AtomPtr;
 
 (* ---------------------- Current match/execution state --------------------- *)
 
@@ -197,35 +200,49 @@ BEGIN
     intrinsic := Value(Program);
     (*ws("Intrinsic '"); wc(CHR(intrinsic)); wsl("'.");*)
     CASE CHR(intrinsic) OF
-      " ": (* No op   *)
-    | "'": (* Literal *) PushAtom(LocalStack, n);  n := Next(n)
-    | "=": (* Equal   *) a := Next(LocalStack);
-                         SetValue(a, BoolVal(
+    |' ':(* No op   *)
+
+    |"'":(* Literal *) PushAtom(LocalStack, n);  n := Next(n)
+    |"0":(* Zero    *) PushValue(LocalStack, 0)
+    |"1":(* One     *) PushValue(LocalStack, 1)
+    |"~":(* Not     *) LocalStack.value := BoolVal(LocalStack.value = 0)
+
+    |'=':(* Equal   *) a := Next(LocalStack);
+                       SetValue(a, BoolVal(
                            (IsValue(LocalStack) = IsValue(a))
-                         & (LocalStack.value    = (a.value))
-                         ));
-                         Drop(LocalStack)
-    | '?': (* If      *) IF LocalStack.value = 0 THEN n := Next(n) END; Drop(LocalStack)
-    | '[': (* Open    *) PushLink(LocalStack, Input)
-    | ']': (* Close   *) a := PopLink(LocalStack);
-                         SetLink(a, Next(a));  SetNext(a, Next(Input));
-                         FreeAtom(Input);  Input := a
-    | '*': (* Loop    *) PushLink(LoopStack, n)
-    | 'i': (* Input   *) PushAtom(LocalStack, Input)
-    | '$': (* Next    *) (* Special case input advance for de-nest program:
-                            advances 'Input' pointer, but breaks the input
-                            list before any ']'. *)
-                         Assert(Input # NIL, "Next: Input cannot be NIL.");
-                         a := Next(Input);
-                         IF (a # NIL) & IsValue(a) & (Value(a) = ORD(']')) THEN
-                           SetNext(Input, NIL)
-                         END;
-                         Input := a
-    | 'e': (* Eof     *) PushValue(LocalStack, BoolVal(Input = NIL))
-    | 'u': (* Until   *) IF LocalStack.value # 0
-                           THEN Drop(LoopStack) ELSE n := Link(LoopStack) END;
-                         Drop(LocalStack)
-    | '`': (* Debug   *) DebugOut(n);  wl;  n := Next(n)
+                         & (LocalStack.value    = (a.value))));
+                       Drop(LocalStack)
+
+    |'?':(* If      *) IF LocalStack.value = 0 THEN n := Next(n) END;
+                       Drop(LocalStack)
+
+    (* Loops *)
+    |'*':(* Loop    *) PushLink(LoopStack, n)
+    |'u':(* Until   *) IF LocalStack.value # 0
+                         THEN Drop(LoopStack) ELSE n := Link(LoopStack) END;
+                       Drop(LocalStack)
+
+    (* InputTemp list (temporary) *)
+    |'I':(* InputTemp   *) PushAtom(LocalStack, InputTemp)
+    |'E':(* Eof     *) PushValue(LocalStack, BoolVal(InputTemp = NIL))
+
+    (* Nesting compilation *)
+    |'[':(* Open    *) PushLink(LocalStack, InputTemp)
+    |']':(* Close   *) a := PopLink(LocalStack);
+                       SetLink(a, Next(a));  SetNext(a, Next(InputTemp));
+                       FreeAtom(InputTemp);  InputTemp := a
+    |'$':(* Next    *) (* Special case input advance for de-nest program:
+                          advances 'InputTemp' pointer, but breaks the input
+                          list before any ']'. *)
+                       Assert(InputTemp # NIL, "Next: InputTemp cannot be NIL.");
+                       a := Next(InputTemp);
+                       IF (a # NIL) & IsValue(a) & (Value(a) = ORD(']')) THEN
+                         SetNext(InputTemp, NIL)
+                       END;
+                       InputTemp := a
+
+
+    |'`':(* Debug   *) DebugOut(n);  wl;  n := Next(n)
     ELSE Fail("Unrecognised intrinsic code.")
     END;
     Program := n
@@ -247,22 +264,22 @@ END Step;
 
 PROCEDURE InitMatchList(pattern: AtomPtr);
 BEGIN
-  IsSequence := Value(pattern) = ORD("'");
-  Match := Next(pattern);
+  SetValue(Sequence, BoolVal(Value(pattern) = ORD("'")));
+  Pattern := Next(pattern);
 END InitMatchList;
 
 PROCEDURE Backtrack(matched: BOOLEAN);
 VAR prevInput: AtomPtr;
 BEGIN
-  IF Link(LocalStack) = NIL THEN  (* Match is complete *)
-    Drop(LocalStack); PushValue(LocalStack, BoolVal(matched)); Match := NIL
+  IF Link(LocalStack) = NIL THEN  (* Pattern is complete *)
+    Drop(LocalStack); PushValue(LocalStack, BoolVal(matched)); Pattern := NIL
   ELSE
-    Match := PopLink(LocalStack);
-    IF matched THEN Drop(LocalStack) ELSE Input := PopLink(LocalStack) END;
-    Assert(IsValue(LocalStack), "Expected Saved IsSequence value on local stack.");
-    IsSequence := Value(LocalStack) # 0;  Drop(LocalStack);
-    IF matched = IsSequence THEN
-      Match := Next(Match)
+    Pattern := PopLink(LocalStack);
+    IF matched THEN Drop(LocalStack) ELSE InputTemp := PopLink(LocalStack) END;
+    Assert(IsValue(LocalStack), "Expected Saved Sequence value on local stack.");
+    SetValue(Sequence, Value(LocalStack));  Drop(LocalStack);
+    IF matched = (Value(Sequence)#0) THEN
+      Pattern := Next(Pattern)
     ELSE (* Failure during sequence, or success of a choice *)
       Backtrack(matched)
     END
@@ -272,21 +289,21 @@ END Backtrack;
 PROCEDURE MatchStep;
 VAR equal: BOOLEAN;
 BEGIN
-  IF Match = NIL THEN
-    Backtrack(IsSequence)
-  ELSIF IsValue(Match) THEN
-    equal := Value(Match) = Value(Input);
-    IF equal THEN Input := Next(Input) END;
-    IF (IsSequence = equal) & (Next(Match) # NIL) THEN  (* move to next in list *)
-      Match := Next(Match)
+  IF Pattern = NIL THEN
+    Backtrack(Value(Sequence)#0)
+  ELSIF IsValue(Pattern) THEN
+    equal := Value(Pattern) = Value(InputTemp);
+    IF equal THEN InputTemp := Next(InputTemp) END;
+    IF ((Value(Sequence)#0) = equal) & (Next(Pattern) # NIL) THEN  (* move to next in list *)
+      Pattern := Next(Pattern)
     ELSE  (* look no further in list *)
       Backtrack(equal)
     END
   ELSE
-    PushValue(LocalStack, BoolVal(IsSequence));
-    PushLink(LocalStack, Input);
-    PushLink(LocalStack, Match);
-    InitMatchList(Link(Match))
+    PushValue(LocalStack, Value(Sequence));
+    PushLink(LocalStack, InputTemp);
+    PushLink(LocalStack, Pattern);
+    InitMatchList(Link(Pattern))
   END;
 END MatchStep;
 
@@ -298,7 +315,6 @@ END StartMatch;
 
 
 (* ----------------------------- Test harness ----------------------------- *)
-
 
 PROCEDURE InitMemory;
 VAR i: INTEGER;
@@ -341,9 +357,9 @@ RETURN first END CharsToList;
 PROCEDURE NestedCharsToList(s: ARRAY OF CHAR): AtomPtr;
 VAR result: AtomPtr;
 BEGIN
-  Input   := CharsToList(s);
-  result  := Input;
-  Program := CharsToList("* '[i=?[ ']i=?] $ eu");
+  InputTemp   := CharsToList(s);
+  result  := InputTemp;
+  Program := CharsToList("* '[I=?[ ']I=?] $ Eu");
   (*ws("Before de-nesting, result = "); DumpList(result); wl;*)
   WHILE Program # NIL DO Step END;
   (*ws("After de-nesting, result = "); DumpList(result); wl;*)
@@ -360,18 +376,16 @@ END TestNesting;
 PROCEDURE TestMatch(expect: BOOLEAN; i, p: ARRAY OF CHAR);
 VAR matched: BOOLEAN;
 BEGIN
-  wl; wsl("----------");
-  ws("Test match input '"); ws(i); ws("', pattern '"); ws(p); wsl("'.");
+  ws("Test match input '"); ws(i); ws("', pattern '"); ws(p); ws("',  ");
   StartMatch(NestedCharsToList(p));
-  Input := CharsToList(i);
+  InputTemp := CharsToList(i);
 
-  WHILE Match # NIL DO MatchStep END;
+  WHILE Pattern # NIL DO MatchStep END;
 
   matched := Value(LocalStack)#0;  Drop(LocalStack);
   ws("Matched: "); wb(matched);
   Assert(matched = expect, " .. expected opposite.");
   wsl(" as expected.");
-  wl;
 END TestMatch;
 
 PROCEDURE TestMatching;
@@ -392,5 +406,8 @@ BEGIN
   InitMemory;
   Free := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory));
   (*TestNewAtom*)
+  Input    := NewAtom();
+  Pattern  := NewAtom();
+  Sequence := NewAtom();
   TestNesting;  TestMatching
 END dam.
