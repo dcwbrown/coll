@@ -21,8 +21,6 @@ VAR
   ProgramStack:  AtomPtr;
   LoopStack:     AtomPtr;
 
-  InputTemp:         AtomPtr;
-
   (* Standard global variables *)
   Input:         AtomPtr;
   Pattern:       AtomPtr;
@@ -156,6 +154,13 @@ END wa;
 
 (* -------------------------------- Stacks -------------------------------- *)
 
+PROCEDURE CopyAtom(source, target: AtomPtr);
+BEGIN
+  (*ws("Copy atom. Source: "); wa(source); ws(", Target: "); wa(target); wsl(".");*)
+  target.value := source.value;
+  target.next  := (target.next DIV 2) * 2 + source.next MOD 2
+END CopyAtom;
+
 PROCEDURE PushAtom(VAR stack: AtomPtr;  a: AtomPtr);
 VAR l: AtomPtr;
 BEGIN l := NewAtom();
@@ -202,44 +207,64 @@ BEGIN
     CASE CHR(intrinsic) OF
     |' ':(* No op   *)
 
-    |"'":(* Literal *) PushAtom(LocalStack, n);  n := Next(n)
+    (* Stack manipulation *)
+    |'%':(* Dup     *) PushAtom(LocalStack, LocalStack)
+    |'#':(* Drop    *) Drop(LocalStack)
+
+    (* Literals *)
     |"0":(* Zero    *) PushValue(LocalStack, 0)
     |"1":(* One     *) PushValue(LocalStack, 1)
-    |"~":(* Not     *) LocalStack.value := BoolVal(LocalStack.value = 0)
+    |"'":(* Literal *) PushAtom(LocalStack, n);  n := Next(n)
 
+    (* Basic operations *)
+    |"~":(* Not     *) LocalStack.value := BoolVal(LocalStack.value = 0)
     |'=':(* Equal   *) a := Next(LocalStack);
                        SetValue(a, BoolVal(
                            (IsValue(LocalStack) = IsValue(a))
                          & (LocalStack.value    = (a.value))));
                        Drop(LocalStack)
 
+    (* Atom handling *)
+    |'l':(* is Link *) SetValue(LocalStack, BoolVal(~IsValue(LocalStack)))
+    |'n':(* Next    *) SetLink(LocalStack, Next(Link(LocalStack)))
+
+    (* Conditionals and loops *)
     |'?':(* If      *) IF LocalStack.value = 0 THEN n := Next(n) END;
                        Drop(LocalStack)
-
-    (* Loops *)
     |'*':(* Loop    *) PushLink(LoopStack, n)
     |'u':(* Until   *) IF LocalStack.value # 0
                          THEN Drop(LoopStack) ELSE n := Link(LoopStack) END;
                        Drop(LocalStack)
 
-    (* InputTemp list (temporary) *)
-    |'I':(* InputTemp   *) PushAtom(LocalStack, InputTemp)
-    |'E':(* Eof     *) PushValue(LocalStack, BoolVal(InputTemp = NIL))
+    (* Intrinsic global variables *)
+    |'i':(* Input   *) PushLink(LocalStack, Input)
+    |'p':(* Pattern *) PushLink(LocalStack, Pattern)
+    |'s':(* Sequence*) PushLink(LocalStack, Sequence)
+
+    (* Variable access *)
+    |'@':(* Fetch   *) (*ws("Pre fetch, LocalStack = "); wa(LocalStack); wsl(".");*)
+                       CopyAtom(Link(LocalStack), LocalStack)
+                       (*);ws("Post fetch, LocalStack = "); wa(LocalStack); wsl(".")*)
+    |'!':(* Store   *) CopyAtom(Next(LocalStack), Link(LocalStack));
+                       Drop(LocalStack);  Drop(LocalStack)
 
     (* Nesting compilation *)
-    |'[':(* Open    *) PushLink(LocalStack, InputTemp)
+    |'[':(* Open    *) PushLink(LocalStack, Link(Input))
     |']':(* Close   *) a := PopLink(LocalStack);
-                       SetLink(a, Next(a));  SetNext(a, Next(InputTemp));
-                       FreeAtom(InputTemp);  InputTemp := a
+                       SetLink(a, Next(a));  SetNext(a, Next(Link(Input)));
+                       SetLink(Link(Input), NIL);  SetNext(Link(Input), NIL);
+                       SetLink(Input, a)
     |'$':(* Next    *) (* Special case input advance for de-nest program:
-                          advances 'InputTemp' pointer, but breaks the input
+                          advances 'Link(Input)' pointer, but breaks the input
                           list before any ']'. *)
-                       Assert(InputTemp # NIL, "Next: InputTemp cannot be NIL.");
-                       a := Next(InputTemp);
+                       Assert(Link(Input) # NIL, "Next: Link(Input) cannot be NIL.");
+                       a := Next(Link(Input));
+                       (*
                        IF (a # NIL) & IsValue(a) & (Value(a) = ORD(']')) THEN
-                         SetNext(InputTemp, NIL)
+                         SetNext(Link(Input), NIL)
                        END;
-                       InputTemp := a
+                       *)
+                       SetLink(Input, a)
 
 
     |'`':(* Debug   *) DebugOut(n);  wl;  n := Next(n)
@@ -275,7 +300,7 @@ BEGIN
     Drop(LocalStack); PushValue(LocalStack, BoolVal(matched)); Pattern := NIL
   ELSE
     Pattern := PopLink(LocalStack);
-    IF matched THEN Drop(LocalStack) ELSE InputTemp := PopLink(LocalStack) END;
+    IF matched THEN Drop(LocalStack) ELSE SetLink(Input, PopLink(LocalStack)) END;
     Assert(IsValue(LocalStack), "Expected Saved Sequence value on local stack.");
     SetValue(Sequence, Value(LocalStack));  Drop(LocalStack);
     IF matched = (Value(Sequence)#0) THEN
@@ -289,19 +314,21 @@ END Backtrack;
 PROCEDURE MatchStep;
 VAR equal: BOOLEAN;
 BEGIN
-  IF Pattern = NIL THEN
-    Backtrack(Value(Sequence)#0)
-  ELSIF IsValue(Pattern) THEN
-    equal := Value(Pattern) = Value(InputTemp);
-    IF equal THEN InputTemp := Next(InputTemp) END;
+  Assert(Pattern # NIL, "MatchStep entered with unexpectedly NIL pattern.");
+  IF IsValue(Pattern) THEN
+    equal := Value(Pattern) = Value(Link(Input));
+    IF equal THEN SetLink(Input, Next(Link(Input))) END;
     IF ((Value(Sequence)#0) = equal) & (Next(Pattern) # NIL) THEN  (* move to next in list *)
       Pattern := Next(Pattern)
     ELSE  (* look no further in list *)
       Backtrack(equal)
     END
+  ELSIF Link(Pattern) = NIL THEN
+    Pattern := Next(Pattern);
+    IF Pattern = NIL THEN Backtrack(Value(Sequence)#0) END
   ELSE
     PushValue(LocalStack, Value(Sequence));
-    PushLink(LocalStack, InputTemp);
+    PushLink(LocalStack, Link(Input));
     PushLink(LocalStack, Pattern);
     InitMatchList(Link(Pattern))
   END;
@@ -357,9 +384,13 @@ RETURN first END CharsToList;
 PROCEDURE NestedCharsToList(s: ARRAY OF CHAR): AtomPtr;
 VAR result: AtomPtr;
 BEGIN
-  InputTemp   := CharsToList(s);
-  result  := InputTemp;
-  Program := CharsToList("* '[I=?[ ']I=?] $ Eu");
+  SetLink(Input, CharsToList(s));
+  result  := Link(Input);
+(*Program := CharsToList("* '[I=?[ ']I=?] $ Eu");*)
+(*Program := CharsToList("* '[i@@=?[ ']i@@=?] $ i@~u");*)
+(*Program := CharsToList("* '[i@@=?[ ']i@@=?] i@ni! i@~u");*)
+  Program := CharsToList("* i@@ '[=?[ i@@ ']=?] i@n %i! ~u");
+
   (*ws("Before de-nesting, result = "); DumpList(result); wl;*)
   WHILE Program # NIL DO Step END;
   (*ws("After de-nesting, result = "); DumpList(result); wl;*)
@@ -378,7 +409,7 @@ VAR matched: BOOLEAN;
 BEGIN
   ws("Test match input '"); ws(i); ws("', pattern '"); ws(p); ws("',  ");
   StartMatch(NestedCharsToList(p));
-  InputTemp := CharsToList(i);
+  SetLink(Input, CharsToList(i));
 
   WHILE Pattern # NIL DO MatchStep END;
 
