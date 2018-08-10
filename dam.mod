@@ -6,8 +6,8 @@ TYPE
   Address = SYSTEM.ADDRESS;
   AtomPtr = POINTER [1] TO Atom;
   Atom = RECORD
-    next:  Address;  (* Bottom bit of next determines use of value below *)
-    value: Address   (* next MOD 2 = 0: integer value, 1: link address *)
+    next: Address;  (* Bottom bit of next determines use of value below *)
+    data: Address   (* next MOD 2 = 0: integer value, 1: link address *)
   END;
 
 
@@ -83,7 +83,7 @@ BEGIN RETURN SYSTEM.VAL(AtomPtr, (a.next DIV 2) * 2) END Next;
 
 PROCEDURE Value(a: AtomPtr): Address;
 BEGIN Assert(a.next MOD 2 = 0, "Cannot get value from atom that is a link.");
-RETURN a.value END Value;
+RETURN a.data END Value;
 
 PROCEDURE Link(a: AtomPtr): AtomPtr;
 BEGIN
@@ -91,7 +91,7 @@ BEGIN
     ws("Get link from value '"); DebugChar(Value(a)); wsl("'.");
   END;
   Assert(a.next MOD 2 = 1, "Cannot get link from atom that is a value.");
-RETURN SYSTEM.VAL(AtomPtr, a.value) END Link;
+RETURN SYSTEM.VAL(AtomPtr, a.data) END Link;
 
 PROCEDURE SetNext(a, b: AtomPtr);
 BEGIN a.next := SYSTEM.VAL(Address, b) + a.next MOD 2
@@ -99,12 +99,12 @@ END SetNext;
 
 PROCEDURE SetValue(a: AtomPtr; b: Address);
 BEGIN
-  a.value := b;  DEC(a.next, a.next MOD 2)  (* Turn off link flag *)
+  a.data := b;  DEC(a.next, a.next MOD 2)  (* Turn off link flag *)
 END SetValue;
 
 PROCEDURE SetLink(a, b: AtomPtr);
 BEGIN
-  a.value := SYSTEM.VAL(Address, b);
+  a.data := SYSTEM.VAL(Address, b);
   IF IsValue(a) THEN INC(a.next) END  (* Turn on link flag *)
 END SetLink;
 
@@ -113,15 +113,26 @@ VAR result: AtomPtr;
 BEGIN
   Assert(Free # NIL, "Out of memory.");
   result := Free;  Free := Next(Free);
-  result.next := 0;  result.value := 0;
+  result.next := 0;  result.data := 0;
 RETURN result END NewAtom;
 
 PROCEDURE FreeAtom(a: AtomPtr);
 BEGIN
   a.next := SYSTEM.VAL(Address, Free);
-  a.value := 0;
+  a.data := 0;
   Free := a
 END FreeAtom;
+
+PROCEDURE InitMemory;
+VAR i: INTEGER;
+BEGIN
+  FOR i := 0 TO LEN(Memory)-2 DO
+    Memory[i].next := SYSTEM.ADR(Memory[i+1]);
+    Memory[i].data := 0;
+  END;
+  Memory[LEN(Memory)-1].next := 0;
+  Memory[LEN(Memory)-1].data := 0
+END InitMemory;
 
 
 (* ----------------------------- Test harness ----------------------------- *)
@@ -157,14 +168,14 @@ END wa;
 PROCEDURE CopyAtom(source, target: AtomPtr);
 BEGIN
   (*ws("Copy atom. Source: "); wa(source); ws(", Target: "); wa(target); wsl(".");*)
-  target.value := source.value;
+  target.data := source.data;
   target.next  := (target.next DIV 2) * 2 + source.next MOD 2
 END CopyAtom;
 
 PROCEDURE PushAtom(VAR stack: AtomPtr;  a: AtomPtr);
 VAR l: AtomPtr;
 BEGIN l := NewAtom();
-  l.next := a.next;  l.value := a.value;
+  l.next := a.next;  l.data := a.data;
   SetNext(l, stack);  stack := l
 END PushAtom;
 
@@ -217,22 +228,18 @@ BEGIN
     |"'":(* Literal *) PushAtom(LocalStack, n);  n := Next(n)
 
     (* Basic operations *)
-    |"~":(* Not     *) LocalStack.value := BoolVal(LocalStack.value = 0)
+    |"~":(* Not     *) LocalStack.data := BoolVal(LocalStack.data = 0)
     |'=':(* Equal   *) a := Next(LocalStack);
                        SetValue(a, BoolVal(
                            (IsValue(LocalStack) = IsValue(a))
-                         & (LocalStack.value    = (a.value))));
+                         & (LocalStack.data     = (a.data))));
                        Drop(LocalStack)
-
-    (* Atom handling *)
-    |'l':(* is Link *) SetValue(LocalStack, BoolVal(~IsValue(LocalStack)))
-    |'n':(* Next    *) SetLink(LocalStack, Next(Link(LocalStack)))
 
     (* Conditionals and loops *)
-    |'?':(* If      *) IF LocalStack.value = 0 THEN n := Next(n) END;
+    |'?':(* If      *) IF LocalStack.data = 0 THEN n := Next(n) END;
                        Drop(LocalStack)
     |'*':(* Loop    *) PushLink(LoopStack, n)
-    |'u':(* Until   *) IF LocalStack.value # 0
+    |'u':(* Until   *) IF LocalStack.data # 0
                          THEN Drop(LoopStack) ELSE n := Link(LoopStack) END;
                        Drop(LocalStack)
 
@@ -241,10 +248,10 @@ BEGIN
     |'p':(* Pattern *) PushLink(LocalStack, Pattern)
     |'s':(* Sequence*) PushLink(LocalStack, Sequence)
 
-    (* Variable access *)
-    |'@':(* Fetch   *) (*ws("Pre fetch, LocalStack = "); wa(LocalStack); wsl(".");*)
-                       CopyAtom(Link(LocalStack), LocalStack)
-                       (*);ws("Post fetch, LocalStack = "); wa(LocalStack); wsl(".")*)
+    (* Atom access *)
+    |'l':(* is Link *) SetValue(LocalStack, BoolVal(~IsValue(LocalStack)))
+    |',':(* Next    *) SetLink(LocalStack, Next(Link(LocalStack)))
+    |'.':(* Fetch   *) CopyAtom(Link(LocalStack), LocalStack)
     |'!':(* Store   *) CopyAtom(Next(LocalStack), Link(LocalStack));
                        Drop(LocalStack);  Drop(LocalStack)
 
@@ -343,17 +350,6 @@ END StartMatch;
 
 (* ----------------------------- Test harness ----------------------------- *)
 
-PROCEDURE InitMemory;
-VAR i: INTEGER;
-BEGIN
-  FOR i := 0 TO LEN(Memory)-2 DO
-    Memory[i].next := SYSTEM.ADR(Memory[i+1]);
-    Memory[i].value := 0;
-  END;
-  Memory[LEN(Memory)-1].next := 0;
-  Memory[LEN(Memory)-1].value := 0
-END InitMemory;
-
 PROCEDURE TestNewAtom;
 VAR i: INTEGER; p: AtomPtr;
 BEGIN
@@ -389,7 +385,7 @@ BEGIN
 (*Program := CharsToList("* '[I=?[ ']I=?] $ Eu");*)
 (*Program := CharsToList("* '[i@@=?[ ']i@@=?] $ i@~u");*)
 (*Program := CharsToList("* '[i@@=?[ ']i@@=?] i@ni! i@~u");*)
-  Program := CharsToList("* i@@ '[=?[ i@@ ']=?] i@n %i! ~u");
+  Program := CharsToList("* i..'[=?[ i..']=?] i., %i! ~u");
 
   (*ws("Before de-nesting, result = "); DumpList(result); wl;*)
   WHILE Program # NIL DO Step END;
