@@ -223,12 +223,12 @@ BEGIN
     |'#':(* Drop    *) Drop(LocalStack)
 
     (* Literals *)
-    |"0":(* Zero    *) PushValue(LocalStack, 0)
-    |"1":(* One     *) PushValue(LocalStack, 1)
+    |'0':(* Zero    *) PushValue(LocalStack, 0)
+    |'1':(* One     *) PushValue(LocalStack, 1)
     |"'":(* Literal *) PushAtom(LocalStack, n);  n := Next(n)
 
     (* Basic operations *)
-    |"~":(* Not     *) LocalStack.data := BoolVal(LocalStack.data = 0)
+    |'~':(* Not     *) LocalStack.data := BoolVal(LocalStack.data = 0)
     |'=':(* Equal   *) a := Next(LocalStack);
                        SetValue(a, BoolVal(
                            (IsValue(LocalStack) = IsValue(a))
@@ -236,8 +236,12 @@ BEGIN
                        Drop(LocalStack)
 
     (* Conditionals and loops *)
-    |'?':(* If      *) IF LocalStack.data = 0 THEN n := Next(n) END;
+    |'?':(* If      *) IF LocalStack.data = 0 THEN
+                         n := Next(n);
+                         IF IsValue(n) & (Value(n) = ORD(';')) THEN n := Next(n) END
+                        END;
                        Drop(LocalStack)
+    |';':(* else    *) n := Next(n)
     |'*':(* Loop    *) PushLink(LoopStack, n)
     |'u':(* Until   *) IF LocalStack.data # 0
                          THEN Drop(LoopStack) ELSE n := Link(LoopStack) END;
@@ -252,7 +256,7 @@ BEGIN
     |'l':(* is Link *) SetValue(LocalStack, BoolVal(~IsValue(LocalStack)))
     |',':(* Next    *) SetLink(LocalStack, Next(Link(LocalStack)))
     |'.':(* Fetch   *) CopyAtom(Link(LocalStack), LocalStack)
-    |'!':(* Store   *) CopyAtom(Next(LocalStack), Link(LocalStack));
+    |':':(* Store   *) CopyAtom(Next(LocalStack), Link(LocalStack));
                        Drop(LocalStack);  Drop(LocalStack)
 
     (* Nesting compilation *)
@@ -295,12 +299,14 @@ END Step;
 (* -------------------------------- Matching ------------------------------ *)
 
 PROCEDURE InitMatchList(pattern: AtomPtr);
+(* p.. %,p! .''=s! *)
 BEGIN
   SetValue(Sequence, BoolVal(Value(pattern) = ORD("'")));
   Pattern := Next(pattern);
 END InitMatchList;
 
 PROCEDURE Backtrack(matched: BOOLEAN);
+(*  *)
 VAR prevInput: AtomPtr;
 BEGIN
   IF Link(LocalStack) = NIL THEN  (* Pattern is complete *)
@@ -382,14 +388,8 @@ VAR result: AtomPtr;
 BEGIN
   SetLink(Input, CharsToList(s));
   result  := Link(Input);
-(*Program := CharsToList("* '[I=?[ ']I=?] $ Eu");*)
-(*Program := CharsToList("* '[i@@=?[ ']i@@=?] $ i@~u");*)
-(*Program := CharsToList("* '[i@@=?[ ']i@@=?] i@ni! i@~u");*)
-  Program := CharsToList("* i..'[=?[ i..']=?] i., %i! ~u");
-
-  (*ws("Before de-nesting, result = "); DumpList(result); wl;*)
+  Program := CharsToList("* i..'[=?[ i..']=?] i., %i: ~u");
   WHILE Program # NIL DO Step END;
-  (*ws("After de-nesting, result = "); DumpList(result); wl;*)
 RETURN result  END NestedCharsToList;
 
 
