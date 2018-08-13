@@ -25,6 +25,8 @@ VAR
   Input:         AtomPtr;
   Pattern:       AtomPtr;
   Sequence:      AtomPtr;
+  MatchFn:       AtomPtr;
+  BacktrackFn:   AtomPtr;
 
 (* ---------------------- Current match/execution state --------------------- *)
 
@@ -216,7 +218,7 @@ BEGIN
     intrinsic := Value(Program);
     (*ws("Intrinsic '"); wc(CHR(intrinsic)); wsl("'.");*)
     CASE CHR(intrinsic) OF
-    |' ':(* No op   *)
+    |' ', 0AX, 0DX: (* No op   *)
 
     (* Stack manipulation *)
     |'%':(* Dup     *) PushAtom(LocalStack, LocalStack)
@@ -251,9 +253,11 @@ BEGIN
     |'i':(* Input   *) PushLink(LocalStack, Input)
     |'p':(* Pattern *) PushLink(LocalStack, Pattern)
     |'s':(* Sequence*) PushLink(LocalStack, Sequence)
+    |'m':(* MatchFn *) PushLink(LocalStack, MatchFn)
+    |'b':(* BackFn  *) PushLink(LocalStack, BacktrackFn)
 
     (* Atom access *)
-    |'l':(* is Link *) SetValue(LocalStack, BoolVal(~IsValue(LocalStack)))
+    |'_':(* is Link *) SetValue(LocalStack, BoolVal(~IsValue(LocalStack)))
     |',':(* Next    *) SetLink(LocalStack, Next(Link(LocalStack)))
     |'.':(* Fetch   *) CopyAtom(Link(LocalStack), LocalStack)
     |':':(* Store   *) CopyAtom(Next(LocalStack), Link(LocalStack));
@@ -325,6 +329,16 @@ BEGIN
 END Backtrack;
 
 PROCEDURE MatchStep;
+(*
+  p.._?[ `[Pattern entry is link]
+    s.               `[Push sequence flag on local stack]
+    i.               `[Push input position on local stack]
+    p.               `[Push pattern position on local stack]
+    p.. %,p! .''=s!  `[Initialise match in nested list]
+  ][     `[Pattern entry is value]
+    p.. i..
+  ]
+*)
 VAR equal: BOOLEAN;
 BEGIN
   Assert(Pattern # NIL, "MatchStep entered with unexpectedly NIL pattern.");
@@ -336,9 +350,11 @@ BEGIN
     ELSE  (* look no further in list *)
       Backtrack(equal)
     END
+  (*
   ELSIF Link(Pattern) = NIL THEN
     Pattern := Next(Pattern);
     IF Pattern = NIL THEN Backtrack(Value(Sequence)#0) END
+  *)
   ELSE
     PushValue(LocalStack, Value(Sequence));
     PushLink(LocalStack, Link(Input));
@@ -359,7 +375,7 @@ END StartMatch;
 PROCEDURE TestNewAtom;
 VAR i: INTEGER; p: AtomPtr;
 BEGIN
-  FOR i := 0 TO LEN(Memory) DO
+  FOR i := 1 TO LEN(Memory) DO
     p := NewAtom();
     wi(i); ws(" at "); wx(SYSTEM.VAL(Address, p), 1); wl;
   END;
@@ -367,45 +383,45 @@ BEGIN
   p := NewAtom()
 END TestNewAtom;
 
+PROCEDURE BootstrapAddChar(VAR atom: AtomPtr; ch: CHAR);
+BEGIN SetNext(atom, NewAtom());  atom := Next(atom);  SetValue(atom, ORD(ch))
+END BootstrapAddChar;
 
-PROCEDURE CharsToList(s: ARRAY OF CHAR): AtomPtr;
-VAR first,last,new: AtomPtr; i: INTEGER;
+PROCEDURE BootstrapLoader(s: ARRAY OF CHAR): AtomPtr;
+VAR head, current, nest: AtomPtr;  i: INTEGER;  escaped: BOOLEAN;
 BEGIN i := 0;
-  IF (i < LEN(s)) & (s[0] # 0X) THEN
-    first := NewAtom();
-    SetValue(first, ORD(s[0]));  INC(i);
-    last := first;
-    WHILE (i < LEN(s)) & (s[i] # 0X) DO
-      new := NewAtom();  SetValue(new, ORD(s[i]));
-      INC(i);  SetNext(last, new);  last := new;
-    END
+  head := NewAtom();  current := head;  escaped := FALSE;
+  WHILE (i < LEN(s)) & (s[i] # 0X) DO
+    IF escaped THEN
+      BootstrapAddChar(current, s[i]);  escaped := FALSE
+    ELSE
+      CASE s[i] OF
+      |'^': escaped := TRUE
+      |'[': SetNext(current, NewAtom());  current := Next(current);  PushLink(LocalStack, current)
+      |']': nest := PopLink(LocalStack);  SetLink(nest, Next(nest));
+            SetNext(current, NIL);  current := nest;  SetNext(current, NIL)
+      ELSE  BootstrapAddChar(current, s[i])
+      END
+    END;
+    INC(i)
   END;
-RETURN first END CharsToList;
+  current := Next(head);  FreeAtom(head);
+RETURN current END BootstrapLoader;
 
 
-PROCEDURE NestedCharsToList(s: ARRAY OF CHAR): AtomPtr;
-VAR result: AtomPtr;
+PROCEDURE TestBootstrapLoader;
 BEGIN
-  SetLink(Input, CharsToList(s));
-  result  := Link(Input);
-  Program := CharsToList("* i..'[=?[ i..']=?] i., %i: ~u");
+  Program := BootstrapLoader("`[Testing]`[more]`.`[`x`] [`[nested]] `[abc[def]ghi]");
   WHILE Program # NIL DO Step END;
-RETURN result  END NestedCharsToList;
+END TestBootstrapLoader;
 
 
-PROCEDURE TestNesting;
-BEGIN
-  Program := NestedCharsToList("`[Testing]`[more]`.`[`x`] [`[nested]] `[abc[def]ghi]");
-  WHILE Program # NIL DO Step END;
-END TestNesting;
-
-
-PROCEDURE TestMatch(expect: BOOLEAN; i, p: ARRAY OF CHAR);
+PROCEDURE TestOberonCodedMatch(expect: BOOLEAN; i, p: ARRAY OF CHAR);
 VAR matched: BOOLEAN;
 BEGIN
   ws("Test match input '"); ws(i); ws("', pattern '"); ws(p); ws("',  ");
-  StartMatch(NestedCharsToList(p));
-  SetLink(Input, CharsToList(i));
+  StartMatch(BootstrapLoader(p));
+  SetLink(Input, BootstrapLoader(i));
 
   WHILE Pattern # NIL DO MatchStep END;
 
@@ -413,28 +429,30 @@ BEGIN
   ws("Matched: "); wb(matched);
   Assert(matched = expect, " .. expected opposite.");
   wsl(" as expected.");
-END TestMatch;
+END TestOberonCodedMatch;
 
-PROCEDURE TestMatching;
+PROCEDURE TestOberonCodedMatching;
 BEGIN
-  TestMatch(TRUE,  "test", "'test");
-  TestMatch(FALSE, "test", "'toast");
-  TestMatch(TRUE,  "t",    "/tuv");
-  TestMatch(TRUE,  "t",    "/rst");
-  TestMatch(FALSE, "t",    "/abc");
-  TestMatch(TRUE,  "test", "'te['s]t");
-  TestMatch(TRUE,  "fred", "/['bert]['fred]['harry]");
-  TestMatch(TRUE,  "fred", "'fr[/aeiou]d")
-END TestMatching;
+  TestOberonCodedMatch(TRUE,  "test", "'test");
+  TestOberonCodedMatch(FALSE, "test", "'toast");
+  TestOberonCodedMatch(TRUE,  "t",    "/tuv");
+  TestOberonCodedMatch(TRUE,  "t",    "/rst");
+  TestOberonCodedMatch(FALSE, "t",    "/abc");
+  TestOberonCodedMatch(TRUE,  "test", "'te['s]t");
+  TestOberonCodedMatch(TRUE,  "fred", "/['bert]['fred]['harry]");
+  TestOberonCodedMatch(TRUE,  "fred", "'fr[/aeiou]d")
+END TestOberonCodedMatching;
 
 
 BEGIN
   Assert(SYSTEM.VAL(Address, NIL) = 0, "Expected NIL to be zero.");
   InitMemory;
   Free := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory));
-  (*TestNewAtom*)
-  Input    := NewAtom();
-  Pattern  := NewAtom();
-  Sequence := NewAtom();
-  TestNesting;  TestMatching
+  (*TestNewAtom;*)
+  Input       := NewAtom();
+  Pattern     := NewAtom();
+  Sequence    := NewAtom();
+  MatchFn     := NewAtom();
+  BacktrackFn := NewAtom();
+  TestBootstrapLoader;  TestOberonCodedMatching
 END dam.
