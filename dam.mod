@@ -20,6 +20,7 @@ VAR
   Program:       AtomPtr;
   ProgramStack:  AtomPtr;
   LoopStack:     AtomPtr;
+  Boot:          AtomPtr;
 
   (* Standard global variables *)
   Input:         AtomPtr;
@@ -27,6 +28,8 @@ VAR
   Sequence:      AtomPtr;
   MatchFn:       AtomPtr;
   BacktrackFn:   AtomPtr;
+
+  IntrinsicVariable: ARRAY 26 OF AtomPtr;
 
 (* ---------------------- Current match/execution state --------------------- *)
 
@@ -204,6 +207,20 @@ BEGIN Assert(~IsValue(stack), "Cannot pop link when top of stcak is value.");
 RETURN result END PopLink;
 
 
+(* ---------------------- Intrinsic variables (a..z) ---------------------- *)
+
+
+PROCEDURE MakeIntrinsicVariables;
+VAR i: INTEGER;
+BEGIN
+  FOR i := 0 TO 25 DO IntrinsicVariable[i] := NewAtom() END;
+  Input       := IntrinsicVariable[ORD('i')-ORD('a')];
+  Pattern     := IntrinsicVariable[ORD('p')-ORD('a')];
+  Sequence    := IntrinsicVariable[ORD('s')-ORD('a')];
+  MatchFn     := IntrinsicVariable[ORD('m')-ORD('a')];
+  BacktrackFn := IntrinsicVariable[ORD('b')-ORD('a')];
+END MakeIntrinsicVariables;
+
 (* ---------------------------- Atom functions ---------------------------- *)
 
 
@@ -219,6 +236,9 @@ BEGIN
     (*ws("Intrinsic '"); wc(CHR(intrinsic)); wsl("'.");*)
     CASE CHR(intrinsic) OF
     |' ', 0AX, 0DX: (* No op   *)
+
+    (* Intrinsic global variables *)
+    |'a'..'z':         PushLink(LocalStack, IntrinsicVariable[intrinsic - ORD('a')])
 
     (* Stack manipulation *)
     |'%':(* Dup     *) PushAtom(LocalStack, LocalStack)
@@ -236,25 +256,17 @@ BEGIN
                            (IsValue(LocalStack) = IsValue(a))
                          & (LocalStack.data     = (a.data))));
                        Drop(LocalStack)
+    |'&':(* And     *) a := Next(LocalStack);
+                       SetValue(a, BoolVal((LocalStack.data#0) & (a.data#0)));
+                       Drop(LocalStack)
 
     (* Conditionals and loops *)
     |'?':(* If      *) IF LocalStack.data = 0 THEN
                          n := Next(n);
-                         IF IsValue(n) & (Value(n) = ORD(';')) THEN n := Next(n) END
+                         IF IsValue(n) & (Value(n) = ORD('\')) THEN n := Next(n) END
                         END;
                        Drop(LocalStack)
-    |';':(* else    *) n := Next(n)
-    |'*':(* Loop    *) PushLink(LoopStack, n)
-    |'u':(* Until   *) IF LocalStack.data # 0
-                         THEN Drop(LoopStack) ELSE n := Link(LoopStack) END;
-                       Drop(LocalStack)
-
-    (* Intrinsic global variables *)
-    |'i':(* Input   *) PushLink(LocalStack, Input)
-    |'p':(* Pattern *) PushLink(LocalStack, Pattern)
-    |'s':(* Sequence*) PushLink(LocalStack, Sequence)
-    |'m':(* MatchFn *) PushLink(LocalStack, MatchFn)
-    |'b':(* BackFn  *) PushLink(LocalStack, BacktrackFn)
+    |'\':(* else    *) n := Next(n)
 
     (* Atom access *)
     |'_':(* is Link *) SetValue(LocalStack, BoolVal(~IsValue(LocalStack)))
@@ -262,28 +274,11 @@ BEGIN
     |'.':(* Fetch   *) CopyAtom(Link(LocalStack), LocalStack)
     |':':(* Store   *) CopyAtom(Next(LocalStack), Link(LocalStack));
                        Drop(LocalStack);  Drop(LocalStack)
+    |'!':(* Execute *) PushLink(ProgramStack, n); n := PopLink(LocalStack)
 
-    (* Nesting compilation *)
-    |'[':(* Open    *) PushLink(LocalStack, Link(Input))
-    |']':(* Close   *) a := PopLink(LocalStack);
-                       SetLink(a, Next(a));  SetNext(a, Next(Link(Input)));
-                       SetLink(Link(Input), NIL);  SetNext(Link(Input), NIL);
-                       SetLink(Input, a)
-    |'$':(* Next    *) (* Special case input advance for de-nest program:
-                          advances 'Link(Input)' pointer, but breaks the input
-                          list before any ']'. *)
-                       Assert(Link(Input) # NIL, "Next: Link(Input) cannot be NIL.");
-                       a := Next(Link(Input));
-                       (*
-                       IF (a # NIL) & IsValue(a) & (Value(a) = ORD(']')) THEN
-                         SetNext(Link(Input), NIL)
-                       END;
-                       *)
-                       SetLink(Input, a)
-
-
-    |'`':(* Debug   *) DebugOut(n);  wl;  n := Next(n)
-    ELSE Fail("Unrecognised intrinsic code.")
+    |'$':(* Debug   *) DebugOut(LocalStack);  wl;  Drop(LocalStack);
+    ELSE wlc; wi(intrinsic); wc(' '); DebugChar(intrinsic); wc(' ');
+      Fail("Unrecognised intrinsic code.")
     END;
     Program := n
   ELSE  (* handle program link - i.e. call linked program *)
@@ -331,12 +326,12 @@ END Backtrack;
 PROCEDURE MatchStep;
 (*
   p.._?[ `[Pattern entry is link]
-    s.               `[Push sequence flag on local stack]
-    i.               `[Push input position on local stack]
-    p.               `[Push pattern position on local stack]
+    s. i. p.  `[Push sequence flag, input position and pattern position on local stack]
     p.. %,p! .''=s!  `[Initialise match in nested list]
   ][     `[Pattern entry is value]
-    p.. i..
+    p.. i.. =
+    %?[i.,i.:]
+    % s.= p., & ?[#p.,p:]\[b!]
   ]
 *)
 VAR equal: BOOLEAN;
@@ -370,6 +365,54 @@ BEGIN
 END StartMatch;
 
 
+(* ------------------------------- Bootstrap -------------------------------- *)
+
+PROCEDURE BootstrapAddChar(VAR current: AtomPtr;  VAR escaped: BOOLEAN;  ch: CHAR);
+VAR nest: AtomPtr;
+BEGIN
+  IF escaped THEN
+    SetNext(current, NewAtom());  current := Next(current);  SetValue(current, ORD(ch));
+    escaped := FALSE
+  ELSE
+    CASE ch OF
+    |'^': escaped := TRUE
+    |'[': SetNext(current, NewAtom());  current := Next(current);  PushLink(LocalStack, current)
+    |']': nest := PopLink(LocalStack);  SetLink(nest, Next(nest));
+          SetNext(current, NIL);  current := nest;  SetNext(current, NIL)
+    ELSE  SetNext(current, NewAtom());  current := Next(current);  SetValue(current, ORD(ch))
+    END
+  END
+END BootstrapAddChar;
+
+PROCEDURE BootstrapLoader(s: ARRAY OF CHAR): AtomPtr;
+VAR head, current: AtomPtr;  i: INTEGER;  escaped: BOOLEAN;
+BEGIN i := 0;
+  head := NewAtom();  current := head;  escaped := FALSE;
+  WHILE (i < LEN(s)) & (s[i] # 0X) DO
+    BootstrapAddChar(current, escaped, s[i]);  INC(i)
+  END;
+  current := Next(head);  FreeAtom(head);
+RETURN current END BootstrapLoader;
+
+PROCEDURE LoadBoostrap(): AtomPtr;
+VAR head, current, nest: AtomPtr;
+    i:                   INTEGER;
+    escaped:             BOOLEAN;
+    f:                   Files.File;
+    r:                   Files.Rider;
+    c:                   CHAR;
+BEGIN
+  head := NewAtom();  current := head;  escaped := FALSE;
+  f := Files.Old("dam.boot");  Assert(f # NIL, "Expected file dam.boot.");
+  Files.Set(r, f, 0);  Files.Read(r, c);
+  WHILE ~r.eof DO
+    IF c # 0DX THEN BootstrapAddChar(current, escaped, c) END;
+    Files.Read(r, c)
+  END;
+  current := Next(head);  FreeAtom(head);
+RETURN current END LoadBoostrap;
+
+
 (* ----------------------------- Test harness ----------------------------- *)
 
 PROCEDURE TestNewAtom;
@@ -383,38 +426,11 @@ BEGIN
   p := NewAtom()
 END TestNewAtom;
 
-PROCEDURE BootstrapAddChar(VAR atom: AtomPtr; ch: CHAR);
-BEGIN SetNext(atom, NewAtom());  atom := Next(atom);  SetValue(atom, ORD(ch))
-END BootstrapAddChar;
-
-PROCEDURE BootstrapLoader(s: ARRAY OF CHAR): AtomPtr;
-VAR head, current, nest: AtomPtr;  i: INTEGER;  escaped: BOOLEAN;
-BEGIN i := 0;
-  head := NewAtom();  current := head;  escaped := FALSE;
-  WHILE (i < LEN(s)) & (s[i] # 0X) DO
-    IF escaped THEN
-      BootstrapAddChar(current, s[i]);  escaped := FALSE
-    ELSE
-      CASE s[i] OF
-      |'^': escaped := TRUE
-      |'[': SetNext(current, NewAtom());  current := Next(current);  PushLink(LocalStack, current)
-      |']': nest := PopLink(LocalStack);  SetLink(nest, Next(nest));
-            SetNext(current, NIL);  current := nest;  SetNext(current, NIL)
-      ELSE  BootstrapAddChar(current, s[i])
-      END
-    END;
-    INC(i)
-  END;
-  current := Next(head);  FreeAtom(head);
-RETURN current END BootstrapLoader;
-
-
-PROCEDURE TestBootstrapLoader;
+PROCEDURE TestIntrinsicCode(s: ARRAY OF CHAR);
 BEGIN
-  Program := BootstrapLoader("`[Testing]`[more]`.`[`x`] [`[nested]] `[abc[def]ghi]");
+  Program := BootstrapLoader(s);
   WHILE Program # NIL DO Step END;
-END TestBootstrapLoader;
-
+END TestIntrinsicCode;
 
 PROCEDURE TestOberonCodedMatch(expect: BOOLEAN; i, p: ARRAY OF CHAR);
 VAR matched: BOOLEAN;
@@ -449,10 +465,14 @@ BEGIN
   InitMemory;
   Free := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory));
   (*TestNewAtom;*)
-  Input       := NewAtom();
-  Pattern     := NewAtom();
-  Sequence    := NewAtom();
-  MatchFn     := NewAtom();
-  BacktrackFn := NewAtom();
-  TestBootstrapLoader;  TestOberonCodedMatching
+  MakeIntrinsicVariables;
+  TestIntrinsicCode("'[-- Testing bootstrap nesting parser.]$ '[more]$ '.$ '[$x$]$ ['[nested]$] '[abc[def]ghi]$");
+  TestOberonCodedMatching;
+  TestIntrinsicCode("'[-- Testing stored programs.]$ '['[stored program]$]m: '[within]$ m!");
+
+  Boot := LoadBoostrap();  DumpList(Boot);
+
+  (* Run the bootstrap *)
+  Program := Boot;  WHILE Program # NIL DO Step END;
 END dam.
+
