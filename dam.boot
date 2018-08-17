@@ -1,6 +1,16 @@
-' $
-'[Bootstrapping ...]$
-'[-----------------]$
+' 3}
+'[Bootstrapping ...]3}
+'[-----------------]3}
+
+
+'[0{ % 1} 91+=~?[x!]]x:
+x!
+2}
+
+
+'[0{ % 1} 91+=~]   '[fn that echos a char and returns if it was LF]#
+
+
 
 
 '[

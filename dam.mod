@@ -1,6 +1,6 @@
 MODULE dam;  (* dam - data, algorithms and memory *)
 
-IMPORT Strings, Files, TextWriter, SYSTEM;
+IMPORT Strings, Files, TextWriter, SYSTEM, In;
 
 TYPE
   Address = SYSTEM.ADDRESS;
@@ -75,6 +75,25 @@ BEGIN
 END DebugChar;
 
 
+(* ---------------------------- Unicode output ---------------------------- *)
+
+PROCEDURE wut(u: LONGINT; n: INTEGER);
+BEGIN
+  IF n > 1 THEN wut(u DIV 64, n-1) END;
+  wc(CHR(u MOD 64 + 080H))
+END wut;
+
+PROCEDURE wu(u: LONGINT);  (* Write Unicode codepoint as UTF-8 *)
+BEGIN
+  IF    u < 000080H THEN wc(CHR(u))
+  ELSIF u < 000800H THEN wc(CHR(u DIV 00040H + 0C0H));  wut(u, 1)
+  ELSIF u < 010000H THEN wc(CHR(u DIV 01000H + 0E0H));  wut(u, 2)
+  ELSIF u < 110000H THEN wc(CHR(u DIV 40000H + 0F0H));  wut(u, 3)
+  ELSE Fail("Write unicode value > 10FFFFH.")
+  END
+END wu;
+
+
 (* ----------------------------- Atom access ------------------------------ *)
 
 PROCEDURE BoolVal(b: BOOLEAN): Address;
@@ -146,9 +165,9 @@ PROCEDURE^ DebugOut(a: AtomPtr);
 
 PROCEDURE DumpList(a: AtomPtr);
 BEGIN
-    wc('{');
+    wc('[');
     WHILE a # NIL DO DebugOut(a); a := Next(a) END;
-    wc ('}')
+    wc (']')
 END DumpList;
 
 PROCEDURE DebugOut(a: AtomPtr);
@@ -226,6 +245,33 @@ END MakeIntrinsicVariables;
 
 (* ----------------------------- Interpreter ------------------------------ *)
 
+PROCEDURE EngineInput;
+VAR kind: LONGINT; c: CHAR;
+BEGIN kind := Value(LocalStack);  Drop(LocalStack);
+  CASE kind OF
+  |0: c := 0X;  In.Char(c);  PushValue(LocalStack, ORD(c))
+  ELSE Fail("EngineInput kind unknown.")
+  END
+END EngineInput;
+
+
+PROCEDURE WriteAtomAsChars(a: AtomPtr);
+BEGIN IF IsValue(a) THEN wu(Value(a)) ELSE
+  a := Link(a);  WHILE a # NIL DO WriteAtomAsChars(a); a := Next(a) END
+END END WriteAtomAsChars;
+
+PROCEDURE EngineOutput;
+VAR kind: LONGINT;
+BEGIN kind := Value(LocalStack);  Drop(LocalStack);
+  CASE kind OF
+  |0: DebugOut(LocalStack);  wl;  Drop(LocalStack)
+  |1: WriteAtomAsChars(LocalStack); Drop(LocalStack)
+  |2: wl
+  |3: WriteAtomAsChars(LocalStack); Drop(LocalStack); wl
+  ELSE Fail("EngineOutput kind unknown.")
+  END
+END EngineOutput;
+
 PROCEDURE Step;
 VAR intrinsic: Address;  a, n: AtomPtr;
 BEGIN
@@ -237,16 +283,15 @@ BEGIN
     CASE CHR(intrinsic) OF
     |' ', 0AX, 0DX: (* No op   *)
 
-    (* Intrinsic global variables *)
+    (* Intrinsic global variables a..z and interger literals 0..9 *)
     |'a'..'z':         PushLink(LocalStack, IntrinsicVariable[intrinsic - ORD('a')])
+    |'0'..'9':         PushValue(LocalStack, intrinsic - ORD('0'))
 
     (* Stack manipulation *)
     |'%':(* Dup     *) PushAtom(LocalStack, LocalStack)
     |'#':(* Drop    *) Drop(LocalStack)
 
     (* Literals *)
-    |'0':(* Zero    *) PushValue(LocalStack, 0)
-    |'1':(* One     *) PushValue(LocalStack, 1)
     |"'":(* Literal *) PushAtom(LocalStack, n);  n := Next(n)
 
     (* Basic operations *)
@@ -256,17 +301,16 @@ BEGIN
                            (IsValue(LocalStack) = IsValue(a))
                          & (LocalStack.data     = (a.data))));
                        Drop(LocalStack)
+    |'+':(* Plus    *) a := Next(LocalStack);
+                       SetValue(a, Value(LocalStack) + Value(a));
+                       Drop(LocalStack)
     |'&':(* And     *) a := Next(LocalStack);
                        SetValue(a, BoolVal((LocalStack.data#0) & (a.data#0)));
                        Drop(LocalStack)
 
-    (* Conditionals and loops *)
-    |'?':(* If      *) IF LocalStack.data = 0 THEN
-                         n := Next(n);
-                         IF IsValue(n) & (Value(n) = ORD('\')) THEN n := Next(n) END
-                        END;
+    (* Conditional *)
+    |'?':(* If      *) IF LocalStack.data = 0 THEN n := Next(n) END;
                        Drop(LocalStack)
-    |'\':(* else    *) n := Next(n)
 
     (* Atom access *)
     |'_':(* is Link *) SetValue(LocalStack, BoolVal(~IsValue(LocalStack)))
@@ -274,9 +318,13 @@ BEGIN
     |'.':(* Fetch   *) CopyAtom(Link(LocalStack), LocalStack)
     |':':(* Store   *) CopyAtom(Next(LocalStack), Link(LocalStack));
                        Drop(LocalStack);  Drop(LocalStack)
-    |'!':(* Execute *) PushLink(ProgramStack, n); n := PopLink(LocalStack)
+    |'!':(* Execute *) IF n # NIL THEN PushLink(ProgramStack, n) END;
+                       n := PopLink(LocalStack)
 
-    |'$':(* Debug   *) DebugOut(LocalStack);  wl;  Drop(LocalStack);
+    (* Input and output *)
+    |'{':(* Input   *) EngineInput;
+    |'}':(* Output  *) EngineOutput;
+
     ELSE wlc; wi(intrinsic); wc(' '); DebugChar(intrinsic); wc(' ');
       Fail("Unrecognised intrinsic code.")
     END;
@@ -285,7 +333,7 @@ BEGIN
     IF Link(Program) = NIL THEN
       Program := n
     ELSE
-      PushLink(ProgramStack, n);
+      IF n # NIL THEN PushLink(ProgramStack, n) END;  (* IF test optimizes tail recirsion. *)
       Program := Link(Program)
     END
   END;
@@ -466,9 +514,9 @@ BEGIN
   Free := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory));
   (*TestNewAtom;*)
   MakeIntrinsicVariables;
-  TestIntrinsicCode("'[-- Testing bootstrap nesting parser.]$ '[more]$ '.$ '[$x$]$ ['[nested]$] '[abc[def]ghi]$");
+  TestIntrinsicCode("'[-- Testing bootstrap nesting parser.]0} '[more]0} '.0} '[0}x0}]0} ['[nested]0}] '[abc[def]ghi]0}");
   TestOberonCodedMatching;
-  TestIntrinsicCode("'[-- Testing stored programs.]$ '['[stored program]$]m: '[within]$ m!");
+  TestIntrinsicCode("'[-- Testing stored programs.]0} '['[stored program]0}]m: '[within]0} m!");
 
   Boot := LoadBoostrap();  DumpList(Boot);
 
