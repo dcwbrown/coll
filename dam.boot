@@ -1,25 +1,26 @@
-' 3}
-'[Bootstrapping ...]3}
-'[-----------------]3}
+L
+[Bootstrapping ...]WL
+[-----------------]WL
 
 
-'[0{ % 1} 91+=~?[x!]]x:
-x!
-2}
+[
+  [ R % W A=~ [x.!] ?] x:
+  x.!
+  L
 
+  [Try again with !! instead of .!]WL
+  x!!
+  L
+]#
 
-'[0{ % 1} 91+=~]   '[fn that echos a char and returns if it was LF]#
+[Define while.]WL
 
+[%.! [%,.! w.!]? ] w:
 
+[Try while.]WL
 
+[[R%W A=~][[.]W]] w.!
 
-'[
-  p.._?[ '[Pattern entry is link]#
-    s. i. p.  '[Push sequence flag, input position and pattern position on local stack]#
-    p.. %,p! .''=s!  '[Initialise match in nested list]#
-  ][     '[Pattern entry is value]#
-    p.. i.. =
-    %?[i.,i.:]
-    % s.= p., & ?[#p.,p:]\[b!]
-  ]
-]m:
+[Stack at end: ]W
+[sentinel]$
+

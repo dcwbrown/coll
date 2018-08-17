@@ -99,6 +99,9 @@ END wu;
 PROCEDURE BoolVal(b: BOOLEAN): Address;
 BEGIN IF b THEN RETURN 1 ELSE RETURN 0 END END BoolVal;
 
+PROCEDURE Truth(a: AtomPtr): BOOLEAN;
+BEGIN RETURN a.data # 0 END Truth;
+
 PROCEDURE IsValue(a: AtomPtr): BOOLEAN;
 BEGIN RETURN (a.next MOD 2) = 0 END IsValue;
 
@@ -112,7 +115,7 @@ RETURN a.data END Value;
 PROCEDURE Link(a: AtomPtr): AtomPtr;
 BEGIN
   IF a.next MOD 2 # 1 THEN
-    ws("Get link from value '"); DebugChar(Value(a)); wsl("'.");
+    wlc; ws("Get link from value '"); DebugChar(Value(a)); wsl("'.");
   END;
   Assert(a.next MOD 2 = 1, "Cannot get link from atom that is a value.");
 RETURN SYSTEM.VAL(AtomPtr, a.data) END Link;
@@ -221,7 +224,7 @@ END Drop;
 
 PROCEDURE PopLink(VAR stack: AtomPtr): AtomPtr;
 VAR result: AtomPtr;
-BEGIN Assert(~IsValue(stack), "Cannot pop link when top of stcak is value.");
+BEGIN Assert(~IsValue(stack), "Cannot pop link when top of stack is value.");
   result := Link(stack);  Drop(stack);
 RETURN result END PopLink;
 
@@ -245,35 +248,13 @@ END MakeIntrinsicVariables;
 
 (* ----------------------------- Interpreter ------------------------------ *)
 
-PROCEDURE EngineInput;
-VAR kind: LONGINT; c: CHAR;
-BEGIN kind := Value(LocalStack);  Drop(LocalStack);
-  CASE kind OF
-  |0: c := 0X;  In.Char(c);  PushValue(LocalStack, ORD(c))
-  ELSE Fail("EngineInput kind unknown.")
-  END
-END EngineInput;
-
-
 PROCEDURE WriteAtomAsChars(a: AtomPtr);
 BEGIN IF IsValue(a) THEN wu(Value(a)) ELSE
   a := Link(a);  WHILE a # NIL DO WriteAtomAsChars(a); a := Next(a) END
 END END WriteAtomAsChars;
 
-PROCEDURE EngineOutput;
-VAR kind: LONGINT;
-BEGIN kind := Value(LocalStack);  Drop(LocalStack);
-  CASE kind OF
-  |0: DebugOut(LocalStack);  wl;  Drop(LocalStack)
-  |1: WriteAtomAsChars(LocalStack); Drop(LocalStack)
-  |2: wl
-  |3: WriteAtomAsChars(LocalStack); Drop(LocalStack); wl
-  ELSE Fail("EngineOutput kind unknown.")
-  END
-END EngineOutput;
-
 PROCEDURE Step;
-VAR intrinsic: Address;  a, n: AtomPtr;
+VAR intrinsic: Address;  a, n: AtomPtr;  c: CHAR;
 BEGIN
   Assert(Program # NIL, "Program must be non-nil at start of Step.");
   n := Next(Program);
@@ -283,16 +264,14 @@ BEGIN
     CASE CHR(intrinsic) OF
     |' ', 0AX, 0DX: (* No op   *)
 
-    (* Intrinsic global variables a..z and interger literals 0..9 *)
+    (* Intrinsic global variables a..z and integer literals 0..F *)
     |'a'..'z':         PushLink(LocalStack, IntrinsicVariable[intrinsic - ORD('a')])
     |'0'..'9':         PushValue(LocalStack, intrinsic - ORD('0'))
+    |'A'..'F':         PushValue(LocalStack, intrinsic - ORD('A') + 10)
 
     (* Stack manipulation *)
     |'%':(* Dup     *) PushAtom(LocalStack, LocalStack)
     |'#':(* Drop    *) Drop(LocalStack)
-
-    (* Literals *)
-    |"'":(* Literal *) PushAtom(LocalStack, n);  n := Next(n)
 
     (* Basic operations *)
     |'~':(* Not     *) LocalStack.data := BoolVal(LocalStack.data = 0)
@@ -305,12 +284,15 @@ BEGIN
                        SetValue(a, Value(LocalStack) + Value(a));
                        Drop(LocalStack)
     |'&':(* And     *) a := Next(LocalStack);
-                       SetValue(a, BoolVal((LocalStack.data#0) & (a.data#0)));
+                       SetValue(a, BoolVal((Truth(LocalStack)) & (Truth(a))));
                        Drop(LocalStack)
 
     (* Conditional *)
-    |'?':(* If      *) IF LocalStack.data = 0 THEN n := Next(n) END;
-                       Drop(LocalStack)
+    |'?':(* If      *) IF Truth(Next(LocalStack)) THEN
+                         IF n # NIL THEN PushLink(ProgramStack, n) END;
+                         n := Link(LocalStack)
+                       END;
+                       Drop(LocalStack); Drop(LocalStack)
 
     (* Atom access *)
     |'_':(* is Link *) SetValue(LocalStack, BoolVal(~IsValue(LocalStack)))
@@ -322,22 +304,19 @@ BEGIN
                        n := PopLink(LocalStack)
 
     (* Input and output *)
-    |'{':(* Input   *) EngineInput;
-    |'}':(* Output  *) EngineOutput;
+    |'R':(* Input   *) In.Char(c);  PushValue(LocalStack, ORD(c))
+    |'W':(* Output  *) WriteAtomAsChars(LocalStack); Drop(LocalStack)
+    |'L':(* Line    *) wl
+    |'$':(* DebugOut*) DebugOut(LocalStack); wl
 
     ELSE wlc; wi(intrinsic); wc(' '); DebugChar(intrinsic); wc(' ');
       Fail("Unrecognised intrinsic code.")
-    END;
-    Program := n
-  ELSE  (* handle program link - i.e. call linked program *)
-    IF Link(Program) = NIL THEN
-      Program := n
-    ELSE
-      IF n # NIL THEN PushLink(ProgramStack, n) END;  (* IF test optimizes tail recirsion. *)
-      Program := Link(Program)
     END
+  ELSE  (* handle program link - i.e. push linked list *)
+    PushAtom(LocalStack, Program)
   END;
-  (* Program = NIL if we've reached end of a function, return to caller *)
+  Program := n;
+  (* When Program = NIL we've reached end of function and must return to caller *)
   WHILE (Program = NIL) & (ProgramStack # NIL) DO Program := PopLink(ProgramStack) END
 END Step;
 
@@ -514,9 +493,9 @@ BEGIN
   Free := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory));
   (*TestNewAtom;*)
   MakeIntrinsicVariables;
-  TestIntrinsicCode("'[-- Testing bootstrap nesting parser.]0} '[more]0} '.0} '[0}x0}]0} ['[nested]0}] '[abc[def]ghi]0}");
+  TestIntrinsicCode("[-- Testing bootstrap nesting parser.]WL [more]WL [x]WL [[nested]WL] [abc[def]ghi]WL");
   TestOberonCodedMatching;
-  TestIntrinsicCode("'[-- Testing stored programs.]0} '['[stored program]0}]m: '[within]0} m!");
+  TestIntrinsicCode("[-- Testing stored programs.]WL [[stored program]WL]m: [within]WL m!");
 
   Boot := LoadBoostrap();  DumpList(Boot);
 
