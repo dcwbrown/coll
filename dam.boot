@@ -22,5 +22,5 @@ L
 [[R%W A=~][[.]W]] w.!
 
 [Stack at end: ]W
-[sentinel]$
+[sentinel]S
 

@@ -307,7 +307,7 @@ BEGIN
     |'R':(* Input   *) In.Char(c);  PushValue(LocalStack, ORD(c))
     |'W':(* Output  *) WriteAtomAsChars(LocalStack); Drop(LocalStack)
     |'L':(* Line    *) wl
-    |'$':(* DebugOut*) DebugOut(LocalStack); wl
+    |'S':(* DebugOut*) DebugOut(LocalStack); wl
 
     ELSE wlc; wi(intrinsic); wc(' '); DebugChar(intrinsic); wc(' ');
       Fail("Unrecognised intrinsic code.")
@@ -351,16 +351,6 @@ BEGIN
 END Backtrack;
 
 PROCEDURE MatchStep;
-(*
-  p.._?[ `[Pattern entry is link]
-    s. i. p.  `[Push sequence flag, input position and pattern position on local stack]
-    p.. %,p! .''=s!  `[Initialise match in nested list]
-  ][     `[Pattern entry is value]
-    p.. i.. =
-    %?[i.,i.:]
-    % s.= p., & ?[#p.,p:]\[b!]
-  ]
-*)
 VAR equal: BOOLEAN;
 BEGIN
   Assert(Pattern # NIL, "MatchStep entered with unexpectedly NIL pattern.");
@@ -372,11 +362,6 @@ BEGIN
     ELSE  (* look no further in list *)
       Backtrack(equal)
     END
-  (*
-  ELSIF Link(Pattern) = NIL THEN
-    Pattern := Next(Pattern);
-    IF Pattern = NIL THEN Backtrack(Value(Sequence)#0) END
-  *)
   ELSE
     PushValue(LocalStack, Value(Sequence));
     PushLink(LocalStack, Link(Input));
@@ -442,6 +427,7 @@ RETURN current END LoadBoostrap;
 
 (* ----------------------------- Test harness ----------------------------- *)
 
+(*
 PROCEDURE TestNewAtom;
 VAR i: INTEGER; p: AtomPtr;
 BEGIN
@@ -452,6 +438,7 @@ BEGIN
   wsl("Allocated LEN(Memory) atoms successfully, trying one more, which should fail with an out of memory error.");
   p := NewAtom()
 END TestNewAtom;
+*)
 
 PROCEDURE TestIntrinsicCode(s: ARRAY OF CHAR);
 BEGIN
@@ -493,11 +480,18 @@ BEGIN
   Free := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory));
   (*TestNewAtom;*)
   MakeIntrinsicVariables;
-  TestIntrinsicCode("[-- Testing bootstrap nesting parser.]WL [more]WL [x]WL [[nested]WL] [abc[def]ghi]WL");
-  TestOberonCodedMatching;
-  TestIntrinsicCode("[-- Testing stored programs.]WL [[stored program]WL]m: [within]WL m!");
 
-  Boot := LoadBoostrap();  DumpList(Boot);
+  (*
+  TestIntrinsicCode("[-- Testing bootstrap nesting parser.]WL [more]WL [x]WL [[nested]WL] [abc[def]ghi]WL");
+  *)
+
+  TestOberonCodedMatching;
+
+  (*
+  TestIntrinsicCode("[-- Testing stored programs.]WL [[stored program]WL]m: [within]WL m!");
+  *)
+
+  Boot := LoadBoostrap();  (*DumpList(Boot);*)
 
   (* Run the bootstrap *)
   Program := Boot;  WHILE Program # NIL DO Step END;
