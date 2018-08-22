@@ -106,7 +106,7 @@ PROCEDURE IsValue(a: AtomPtr): BOOLEAN;
 BEGIN RETURN (a.next MOD 2) = 0 END IsValue;
 
 PROCEDURE Next(a: AtomPtr): AtomPtr;
-BEGIN RETURN SYSTEM.VAL(AtomPtr, (a.next DIV 2) * 2) END Next;
+BEGIN RETURN SYSTEM.VAL(AtomPtr, (a.next DIV 8) * 8) END Next;
 
 PROCEDURE Value(a: AtomPtr): Address;
 BEGIN Assert(a.next MOD 2 = 0, "Cannot get value from atom that is a link.");
@@ -217,15 +217,10 @@ VAR l: AtomPtr;
 BEGIN l := NewAtom();  SetValue(l, v);  SetNext(l, stack);  stack := l
 END PushValue;
 
-PROCEDURE Drop(VAR stack: AtomPtr);
-VAR unwanted: AtomPtr;
-BEGIN unwanted := stack;  stack := Next(stack);  FreeAtom(unwanted)
-END Drop;
-
 PROCEDURE PopLink(VAR stack: AtomPtr): AtomPtr;
 VAR result: AtomPtr;
 BEGIN Assert(~IsValue(stack), "Cannot pop link when top of stack is value.");
-  result := Link(stack);  Drop(stack);
+  result := Link(stack);  stack := Next(stack);
 RETURN result END PopLink;
 
 
@@ -276,7 +271,7 @@ BEGIN
 
     (* Stack manipulation *)
     |'%':(* Dup     *) PushAtom(LocalStack, LocalStack)
-    |'#':(* Drop    *) Drop(LocalStack)
+    |'#':(* Drop    *) LocalStack := Next(LocalStack)
 
     (* Basic operations *)
     |'~':(* Not     *) LocalStack.data := BoolVal(LocalStack.data = 0)
@@ -284,13 +279,13 @@ BEGIN
                        SetValue(a, BoolVal(
                            (IsValue(LocalStack) = IsValue(a))
                          & (LocalStack.data     = (a.data))));
-                       Drop(LocalStack)
+                       LocalStack := Next(LocalStack)
     |'+':(* Plus    *) a := Next(LocalStack);
                        SetValue(a, Value(LocalStack) + Value(a));
-                       Drop(LocalStack)
+                       LocalStack := Next(LocalStack)
     |'&':(* And     *) a := Next(LocalStack);
                        SetValue(a, BoolVal((Truth(LocalStack)) & (Truth(a))));
-                       Drop(LocalStack)
+                       LocalStack := Next(LocalStack)
 
     (* Conditional *)
     |'?':(* If      *) IF Truth(Next(LocalStack)) THEN
@@ -298,28 +293,28 @@ BEGIN
                          n := Link(LocalStack);
                          PushLink(ProgramStack, n)
                        END;
-                       Drop(LocalStack); Drop(LocalStack)
+                       LocalStack := Next(Next(LocalStack))
 
     (* Atom access *)
     |'_':(* is Link *) SetValue(LocalStack, BoolVal(~IsValue(LocalStack)))
     |',':(* Next    *) SetLink(LocalStack, Next(Link(LocalStack)))
     |'.':(* Fetch   *) CopyAtom(Link(LocalStack), LocalStack)
     |':':(* Store   *) CopyAtom(Next(LocalStack), Link(LocalStack));
-                       Drop(LocalStack);  Drop(LocalStack)
+                       LocalStack := Next(Next(LocalStack))
 
     (* Control transfer *)
     |'!':(* Execute *) PushLink(ProgramStack, n);
                        n := PopLink(LocalStack);
                        PushLink(ProgramStack, n)
     |'@':(* Loop    *) n := Link(ProgramStack)
-    |"'":(* Exit1   *) Drop(ProgramStack);
-                       n := Link(ProgramStack); Drop(ProgramStack)
-    |'"':(* Exit2   *) Drop(ProgramStack); Drop(ProgramStack); Drop(ProgramStack);
-                       n := Link(ProgramStack); Drop(ProgramStack)
+    |"'":(* Exit1   *) ProgramStack := Next(ProgramStack);
+                       n := Link(ProgramStack); ProgramStack := Next(ProgramStack)
+    |'"':(* Exit2   *) ProgramStack := Next(ProgramStack); ProgramStack := Next(ProgramStack); ProgramStack := Next(ProgramStack);
+                       n := Link(ProgramStack); ProgramStack := Next(ProgramStack)
 
     (* Input and output *)
     |'R':(* Input   *) In.Char(c);  PushValue(LocalStack, ORD(c))
-    |'W':(* Output  *) WriteAtomAsChars(LocalStack); Drop(LocalStack)
+    |'W':(* Output  *) WriteAtomAsChars(LocalStack); LocalStack := Next(LocalStack)
     |'L':(* Line    *) wl
     |'S':(* DebugOut*) DebugOut(LocalStack); wl
 
@@ -332,7 +327,7 @@ BEGIN
   Program := n;
   (* When Program = NIL we've reached end of function and must return to caller *)
   WHILE (Program = NIL) & (ProgramStack # NIL) DO
-    Drop(ProgramStack);  Program := PopLink(ProgramStack)
+    ProgramStack := Next(ProgramStack);  Program := PopLink(ProgramStack)
   END
 END Step;
 
@@ -352,12 +347,12 @@ PROCEDURE Backtrack(matched: BOOLEAN);
 VAR prevInput: AtomPtr;
 BEGIN
   IF Link(LocalStack) = NIL THEN  (* Pattern is complete *)
-    Drop(LocalStack); PushValue(LocalStack, BoolVal(matched)); Pattern := NIL
+    LocalStack := Next(LocalStack); PushValue(LocalStack, BoolVal(matched)); Pattern := NIL
   ELSE
     Pattern := PopLink(LocalStack);
-    IF matched THEN Drop(LocalStack) ELSE SetLink(Input, PopLink(LocalStack)) END;
+    IF matched THEN LocalStack := Next(LocalStack) ELSE SetLink(Input, PopLink(LocalStack)) END;
     Assert(IsValue(LocalStack), "Expected Saved Sequence value on local stack.");
-    SetValue(Sequence, Value(LocalStack));  Drop(LocalStack);
+    SetValue(Sequence, Value(LocalStack));  LocalStack := Next(LocalStack);
     IF matched = (Value(Sequence)#0) THEN
       Pattern := Next(Pattern)
     ELSE (* Failure during sequence, or success of a choice *)
@@ -471,7 +466,7 @@ BEGIN
 
   WHILE Pattern # NIL DO MatchStep END;
 
-  matched := Value(LocalStack)#0;  Drop(LocalStack);
+  matched := Value(LocalStack)#0;  LocalStack := Next(LocalStack);
   ws("Matched: "); wb(matched);
   Assert(matched = expect, " .. expected opposite.");
   wsl(" as expected.");
@@ -489,6 +484,73 @@ BEGIN
   TestOberonCodedMatch(TRUE,  "fred", "'fr[/aeiou]d")
 END TestOberonCodedMatching;
 
+
+(* ------------------ Garbage collection experimentiation ----------------- *)
+
+PROCEDURE Used(a: AtomPtr);
+TYPE
+  AtomAsSetsPtr = POINTER TO AtomAsSets;
+  AtomAsSets = RECORD next, data: SET END;
+VAR sp: AtomAsSetsPtr;
+BEGIN
+  IF (a # NIL) & ((a.next MOD 4) < 2) THEN  (* If not already marked used *)
+    WHILE a # NIL DO
+      IF ~IsValue(a) THEN Used(Link(a)) END;
+      sp := SYSTEM.VAL(AtomAsSetsPtr, a);
+      INCL(sp.next, 1);
+      a := Next(a)
+    END
+  END
+END Used;
+
+PROCEDURE CountUsed;
+TYPE
+  AtomAsSetsPtr = POINTER TO AtomAsSets;
+  AtomAsSets = RECORD next, data: SET END;
+VAR sp: AtomAsSetsPtr;  i, used, unused, free: INTEGER;  a: AtomPtr;
+BEGIN
+  used := 0;  free := 0;
+  FOR i := 0 TO LEN(Memory)-1 DO
+    sp := SYSTEM.VAL(AtomAsSetsPtr, SYSTEM.ADR(Memory[i]));
+    IF 1 IN sp^.next THEN INC(used) ELSE INC(unused) END
+  END;
+  ws("Used "); wi(used); ws(", unused "); wi(unused); wsl(".");
+
+  a := Free;  free := 0;
+  WHILE a # NIL DO
+    sp := SYSTEM.VAL(AtomAsSetsPtr, a);
+    Assert(~(1 IN sp.next), "Expected all free list entries to be unused.");
+    INC(free); a := Next(a)
+  END;
+  ws("Free list length"); wi(free); wsl(".");
+
+  ws("Collectable "); wi(unused - free); wsl(".");
+END CountUsed;
+
+PROCEDURE Garbage;
+TYPE
+  AtomAsSetsPtr = POINTER TO AtomAsSets;
+  AtomAsSets = RECORD next, data: SET END;
+VAR i: INTEGER; sp: AtomAsSetsPtr;
+BEGIN
+  wsl("Set all items garbage bit to zero.");
+  FOR i := 0 TO LEN(Memory)-1 DO
+    sp := SYSTEM.VAL(AtomAsSetsPtr, SYSTEM.ADR(Memory[i]));
+    EXCL(sp^.next, 1)
+  END;
+  wsl("Mark LocalStack used.");
+  Used(LocalStack);
+  wsl("Mark Program used.");
+  Used(Program);
+  wsl("Mark ProgramStack used.");
+  Used(ProgramStack);
+  wsl("Mark LoopStack used.");
+  Used(LoopStack);
+  wsl("Mark Boot used.");
+  Used(Boot);
+
+  CountUsed
+END Garbage;
 
 BEGIN
   Assert(SYSTEM.VAL(Address, NIL) = 0, "Expected NIL to be zero.");
@@ -511,5 +573,10 @@ BEGIN
 
   (* Run the bootstrap *)
   Program := Boot;  WHILE Program # NIL DO Step END;
+
+
+  (* Garbage detection *)
+  Garbage
+
 END dam.
 
