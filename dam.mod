@@ -315,7 +315,7 @@ BEGIN
     (* Input and output *)
     |'R':(* Input   *) In.Char(c);  PushValue(LocalStack, ORD(c))
     |'W':(* Output  *) WriteAtomAsChars(LocalStack); LocalStack := Next(LocalStack)
-    |'L':(* Line    *) wl
+    |'N':(* Newline *) wl
     |'S':(* DebugOut*) DebugOut(LocalStack); wl
 
     ELSE wlc; wi(intrinsic); wc(' '); DebugChar(intrinsic); wc(' ');
@@ -336,14 +336,12 @@ END Step;
 (* -------------------------------- Matching ------------------------------ *)
 
 PROCEDURE InitMatchList(pattern: AtomPtr);
-(* p.. %,p! .''=s! *)
 BEGIN
   SetValue(Sequence, BoolVal(Value(pattern) = ORD("'")));
   Pattern := Next(pattern);
 END InitMatchList;
 
 PROCEDURE Backtrack(matched: BOOLEAN);
-(*  *)
 VAR prevInput: AtomPtr;
 BEGIN
   IF Link(LocalStack) = NIL THEN  (* Pattern is complete *)
@@ -514,7 +512,6 @@ BEGIN
     sp := SYSTEM.VAL(AtomAsSetsPtr, SYSTEM.ADR(Memory[i]));
     IF 1 IN sp^.next THEN INC(used) ELSE INC(unused) END
   END;
-  ws("Used "); wi(used); ws(", unused "); wi(unused); wsl(".");
 
   a := Free;  free := 0;
   WHILE a # NIL DO
@@ -522,9 +519,10 @@ BEGIN
     Assert(~(1 IN sp.next), "Expected all free list entries to be unused.");
     INC(free); a := Next(a)
   END;
-  ws("Free list length"); wi(free); wsl(".");
 
-  ws("Collectable "); wi(unused - free); wsl(".");
+  ws("Used "); wi(used); ws(", unused "); wi(unused);
+  ws(", freelist "); wi(free); ws(", collectable "); wi(unused-free);
+  wsl(".")
 END CountUsed;
 
 PROCEDURE Garbage;
@@ -538,6 +536,7 @@ BEGIN
     sp := SYSTEM.VAL(AtomAsSetsPtr, SYSTEM.ADR(Memory[i]));
     EXCL(sp^.next, 1)
   END;
+
   wsl("Mark LocalStack used.");
   Used(LocalStack);
   wsl("Mark Program used.");
