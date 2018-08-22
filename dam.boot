@@ -1,26 +1,15 @@
 L
-[Bootstrapping ...]WL
-[-----------------]WL
+`[Bootstrapping ...]WL
+`[-----------------]WL
+
+[`[Test entering nested lists.]WL]
 
 
-[
-  [ R % W A=~ [x.!] ?] x:
-  x.!
-  L
+`[Input echo loop.]WL
 
-  [Try again with !! instead of .!]WL
-  x!!
-  L
-]#
+[R%W A=?'@]
 
-[Define while.]WL
 
-[%.! [%,.! w.!]? ] w:
-
-[Try while.]WL
-
-[[R%W A=~][[.]W]] w.!
-
-[Stack at end: ]W
-[sentinel]S
+`[Stack at end: ]W
+`[sentinel]S
 

@@ -268,6 +268,7 @@ BEGIN
     |'a'..'z':         PushLink(LocalStack, IntrinsicVariable[intrinsic - ORD('a')])
     |'0'..'9':         PushValue(LocalStack, intrinsic - ORD('0'))
     |'A'..'F':         PushValue(LocalStack, intrinsic - ORD('A') + 10)
+    |'`':              PushAtom(LocalStack, n);  n := Next(n)
 
     (* Stack manipulation *)
     |'%':(* Dup     *) PushAtom(LocalStack, LocalStack)
@@ -288,11 +289,8 @@ BEGIN
                        Drop(LocalStack)
 
     (* Conditional *)
-    |'?':(* If      *) IF Truth(Next(LocalStack)) THEN
-                         IF n # NIL THEN PushLink(ProgramStack, n) END;
-                         n := Link(LocalStack)
-                       END;
-                       Drop(LocalStack); Drop(LocalStack)
+    |'?':(* If      *) IF ~Truth(LocalStack) THEN n := Next(n) END;
+                       Drop(LocalStack)
 
     (* Atom access *)
     |'_':(* is Link *) SetValue(LocalStack, BoolVal(~IsValue(LocalStack)))
@@ -300,8 +298,16 @@ BEGIN
     |'.':(* Fetch   *) CopyAtom(Link(LocalStack), LocalStack)
     |':':(* Store   *) CopyAtom(Next(LocalStack), Link(LocalStack));
                        Drop(LocalStack);  Drop(LocalStack)
-    |'!':(* Execute *) IF n # NIL THEN PushLink(ProgramStack, n) END;
-                       n := PopLink(LocalStack)
+
+    (* Control transfer *)
+    |'!':(* Execute *) PushLink(ProgramStack, n);
+                       n := PopLink(LocalStack);
+                       PushLink(ProgramStack, n)
+    |'@':(* Loop    *) n := Link(ProgramStack)
+    |"'":(* Exit1   *) Drop(ProgramStack);
+                       n := Link(ProgramStack); Drop(ProgramStack)
+    |'"':(* Exit2   *) Drop(ProgramStack); Drop(ProgramStack); Drop(ProgramStack);
+                       n := Link(ProgramStack); Drop(ProgramStack)
 
     (* Input and output *)
     |'R':(* Input   *) In.Char(c);  PushValue(LocalStack, ORD(c))
@@ -312,12 +318,16 @@ BEGIN
     ELSE wlc; wi(intrinsic); wc(' '); DebugChar(intrinsic); wc(' ');
       Fail("Unrecognised intrinsic code.")
     END
-  ELSE  (* handle program link - i.e. push linked list *)
-    PushAtom(LocalStack, Program)
+  ELSE  (* handle program link - i.e. enter linked list *)
+    PushLink(ProgramStack, n);
+    n := Link(Program);
+    PushLink(ProgramStack, n)
   END;
   Program := n;
   (* When Program = NIL we've reached end of function and must return to caller *)
-  WHILE (Program = NIL) & (ProgramStack # NIL) DO Program := PopLink(ProgramStack) END
+  WHILE (Program = NIL) & (ProgramStack # NIL) DO
+    Drop(ProgramStack);  Program := PopLink(ProgramStack)
+  END
 END Step;
 
 
