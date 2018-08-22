@@ -249,9 +249,13 @@ END MakeIntrinsicVariables;
 (* ----------------------------- Interpreter ------------------------------ *)
 
 PROCEDURE WriteAtomAsChars(a: AtomPtr);
-BEGIN IF IsValue(a) THEN wu(Value(a)) ELSE
-  a := Link(a);  WHILE a # NIL DO WriteAtomAsChars(a); a := Next(a) END
-END END WriteAtomAsChars;
+BEGIN
+  IF IsValue(a) THEN
+    wu(Value(a))
+  ELSE
+    a := Link(a);  WHILE a # NIL DO WriteAtomAsChars(a); a := Next(a) END
+  END
+END WriteAtomAsChars;
 
 PROCEDURE Step;
 VAR intrinsic: Address;  a, n: AtomPtr;  c: CHAR;
@@ -289,8 +293,12 @@ BEGIN
                        Drop(LocalStack)
 
     (* Conditional *)
-    |'?':(* If      *) IF ~Truth(LocalStack) THEN n := Next(n) END;
-                       Drop(LocalStack)
+    |'?':(* If      *) IF Truth(Next(LocalStack)) THEN
+                         PushLink(ProgramStack, n);
+                         n := Link(LocalStack);
+                         PushLink(ProgramStack, n)
+                       END;
+                       Drop(LocalStack); Drop(LocalStack)
 
     (* Atom access *)
     |'_':(* is Link *) SetValue(LocalStack, BoolVal(~IsValue(LocalStack)))
@@ -318,10 +326,8 @@ BEGIN
     ELSE wlc; wi(intrinsic); wc(' '); DebugChar(intrinsic); wc(' ');
       Fail("Unrecognised intrinsic code.")
     END
-  ELSE  (* handle program link - i.e. enter linked list *)
-    PushLink(ProgramStack, n);
-    n := Link(Program);
-    PushLink(ProgramStack, n)
+  ELSE  (* handle program link - i.e.push linked list *)
+    PushAtom(LocalStack, Program)
   END;
   Program := n;
   (* When Program = NIL we've reached end of function and must return to caller *)
