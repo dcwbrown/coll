@@ -2,11 +2,8 @@ L
 [Bootstrapping ...]WL
 [-----------------]WL
 
-[[Test entering nested lists.]WL]!
-
-
-[Assert: expression [message]a!]#
-[%~?[WL] #]a:
+[Assert: expression [message]a.!]#
+[%~ [WL]? #]a:
 
 [Some assertions:]WL
 
@@ -14,14 +11,14 @@ L
 35=[3 not equal to 5]a.!
 
 [Counted loop test]#
-[5[[Iteration ]W "`0+W L 1- "0=~?@]!#]!
+[5[[Iteration ]W "`0+W L 1- "0=~ `@? ]!#]!
 
 [Following counted loop test, ]WS
 
 [
   [Input echo loop test. Type a line of text: ]W
-  [R"W A=~?@]!
-]#
+  [R"W A=~ `@?]!
+]!
 
 
 [Variables:
@@ -52,21 +49,21 @@ L
 ]#
 [
   p.[Unexpectedly NIL pattern]a.!
-  [p.._?[                                            [ [Pattern is link.]WL ]#
+  [p.._ [                                            [ [Pattern is link.]WL ]#
       s. i. p. ".o.!
-    ]                                               [ [Pattern is value.]WL ]#
+    ]?                                              [ [Pattern is value.]WL ]#
       p..                                           [ [Pattern char = ]W "W ]#
       i.. [                                           [, Input char = ]W "W ]#
       = e:
       [                                                [, match: ]W e.`0+WL ]#
                                                          [ [After match ]WS ]#
-      [e.?[i.,i:]]!
+      [e. [i.,i:]? ]!
       [                                             [After input advance]WS ]#
-                            [ [Input is now ]W i.  ["?[.] #[nil]]! W [, ]WS ]#
+                           [ [Input is now ]W i.  [" [.]? #[nil]]! W [, ]WS ]#
       [ s. e. =                                         [ [s=e: ]W "`0+WL   ]#
         p.,                                             [ [p.,: ]W "~~`0+WL ]#
         &                                               [ [&: ]W   "`0+WL   ]#
-        ?[p.,p:] b.!
+        [p.,p:]? b.!
       ]!
   ]!
 ] m:
@@ -74,17 +71,17 @@ L
 [BackTrack ( NIL | prevseq previnp prevpat -- )]#
 [                                                   [ [Backtrack entry, ]WS ]#
   "_[Backtrack: expected link on top of stack.]a.!
-  [ " ~?[                                           [ [Pattern complete.]WL ]#
+  [ " ~ [                                           [ [Pattern complete.]WL ]#
           # e. 0p:
-        ]
+        ]?
     p:                       [[Backtrack - pattern updated to ']W p.W ['.]WL]#
                                                        [ [Backtrack (2) ]WS ]#
-    [ e.?[#] i: ]!
+    [ e. [#]? i: ]!
                                                        [ [Backtrack (3) ]WS ]#
     "_~[Backtrack Expected save seq flag on top of stack.]a.!
     s:
                  [[Backtrack (4) p: ]W p.W [, i: ]W i.W [, s: ]W s.W [, ]W S]#
-    [ e. s. =?[ p.,p: ] b.! ]!
+    [ e. s. =[ p.,p: ]? b.! ]!
                  [[Backtrack (5) p: ]W p.W [, i: ]W i.W [, s: ]W s.W [, ]W S]#
   ]!
 ] b:
@@ -97,12 +94,12 @@ L
   N
   [                      [ [Step, input=']W i.W [', pattern=']W p.W [', ]WS ]#
     m.!
-    p.?@
+    p.`@?
   ]!
 
                                                        [ [Match exited, ]WS ]#
-  [Result:   ]W [ "_?[[unexpected link on top of stack.]WL #] `0+WL]!
-  [Expected: ]W [ "_?[[unexpected link on top of stack.]WL #] `0+WL]!
+  [Result:   ]W [ "_[[unexpected link on top of stack.]WL #]? `0+WL]!
+  [Expected: ]W [ "_[[unexpected link on top of stack.]WL #]? `0+WL]!
 ] t:
 
   1 [Fred] ['Fred] t.!

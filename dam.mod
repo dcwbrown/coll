@@ -322,12 +322,14 @@ BEGIN
                        LocalStack := Next(LocalStack)
 
     (* Conditional *)
-    |'?':(* If      *) IF Truth(LocalStack) THEN
-                         IF ~IsValue(n) THEN n := Link(n) END
-                       ELSE
-                         n := Next(n)
+    |'?':(* If      *) a := LocalStack;  LocalStack := Next(Next(LocalStack));
+                       IF Truth(Next(a)) THEN
+                         IF IsValue(a) THEN
+                           n := a;  SetNext(n, NIL)
+                         ELSE
+                           n := Link(a)
+                         END
                        END;
-                       LocalStack := Next(LocalStack)
 
     (* Atom access *)
     |'_':(* is Link *) SetValue(LocalStack, BoolVal(~IsValue(LocalStack)))
@@ -341,13 +343,6 @@ BEGIN
                        n := PopLink(LocalStack);
                        PushLink(ProgramStack, n)
     |'@':(* Loop    *) n := Link(ProgramStack)
-
-    (*
-    |"'":(* Exit1   *) ProgramStack := Next(ProgramStack);
-                       n := Link(ProgramStack); ProgramStack := Next(ProgramStack)
-    |'"':(* Exit2   *) ProgramStack := Next(ProgramStack); ProgramStack := Next(ProgramStack); ProgramStack := Next(ProgramStack);
-                       n := Link(ProgramStack); ProgramStack := Next(ProgramStack)
-    *)
 
     (* Input and output *)
     |'R':(* Input   *) In.Char(c);  PushValue(LocalStack, ORD(c))
@@ -655,6 +650,7 @@ END Garbage;
 
 BEGIN
   Assert(SYSTEM.VAL(Address, NIL) = 0, "Expected NIL to be zero.");
+  ws("Address size is "); wi(SIZE(Address)*8); wsl(" bits.");
   InitMemory;
   Free := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory));
   (*TestNewAtom;*)
