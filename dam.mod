@@ -2,6 +2,9 @@ MODULE dam;  (* dam - data, algorithms and memory *)
 
 IMPORT Strings, Files, TextWriter, SYSTEM, In;
 
+CONST
+  AtomCount = 5000;
+
 TYPE
   Address = SYSTEM.ADDRESS;
   AtomPtr = POINTER [1] TO Atom;
@@ -13,7 +16,7 @@ TYPE
 
 VAR
   Abort:  BOOLEAN;
-  Memory: ARRAY 1000 OF Atom;
+  Memory: ARRAY AtomCount OF Atom;
   Free:   AtomPtr;
 
   LocalStack:    AtomPtr;
@@ -26,10 +29,11 @@ VAR
   Input:         AtomPtr;
   Pattern:       AtomPtr;
   Sequence:      AtomPtr;
-  MatchFn:       AtomPtr;
-  BacktrackFn:   AtomPtr;
 
   IntrinsicVariable: ARRAY 26 OF AtomPtr;
+
+  BootState:  INTEGER;
+  BootNumber: INTEGER;
 
 (* ---------------------- Current match/execution state --------------------- *)
 
@@ -189,6 +193,22 @@ BEGIN
   END
 END wa;
 
+PROCEDURE DumpStack(a: AtomPtr);
+VAR i: INTEGER; b: AtomPtr;
+BEGIN
+  (* Dump any remaining stack content *)
+  IF a = NIL THEN wsl("stack empty.")
+  ELSE
+    (* Count stack entries *)
+    i := 0;  b := a;  WHILE b # NIL DO INC(i); b := Next(b) END; DEC(i);
+    wsl("stack content:");
+    WHILE a # NIL DO
+      ws("  ["); wi(i); ws("] "); wa(a); wl;
+      a := Next(a);  DEC(i)
+    END
+  END
+END DumpStack;
+
 
 (* -------------------------------- Stacks -------------------------------- *)
 
@@ -226,17 +246,11 @@ RETURN result END PopLink;
 
 (* ---------------------- Intrinsic variables (a..z) ---------------------- *)
 
-
-PROCEDURE MakeIntrinsicVariables;
-VAR i: INTEGER;
+PROCEDURE MakeIntrinsicVariable(VAR a: AtomPtr; c: CHAR);
 BEGIN
-  FOR i := 0 TO 25 DO IntrinsicVariable[i] := NewAtom() END;
-  Input       := IntrinsicVariable[ORD('i')-ORD('a')];
-  Pattern     := IntrinsicVariable[ORD('p')-ORD('a')];
-  Sequence    := IntrinsicVariable[ORD('s')-ORD('a')];
-  MatchFn     := IntrinsicVariable[ORD('m')-ORD('a')];
-  BacktrackFn := IntrinsicVariable[ORD('b')-ORD('a')];
-END MakeIntrinsicVariables;
+  a := NewAtom();  IntrinsicVariable[ORD(c) - ORD('a')] := a;
+END MakeIntrinsicVariable;
+
 
 (* ---------------------------- Atom functions ---------------------------- *)
 
@@ -253,7 +267,7 @@ BEGIN
 END WriteAtomAsChars;
 
 PROCEDURE Step;
-VAR intrinsic: Address;  a, n: AtomPtr;  c: CHAR;
+VAR intrinsic: Address;  a, n: AtomPtr;  c: CHAR;  i: LONGINT;
 BEGIN
   Assert(Program # NIL, "Program must be non-nil at start of Step.");
   n := Next(Program);
@@ -264,36 +278,45 @@ BEGIN
     |' ', 0AX, 0DX: (* No op   *)
 
     (* Intrinsic global variables a..z and integer literals 0..F *)
-    |'a'..'z':         PushLink(LocalStack, IntrinsicVariable[intrinsic - ORD('a')])
+    |'a'..'z':         i := intrinsic - ORD('a');
+                       IF IntrinsicVariable[i] = NIL THEN IntrinsicVariable[i] := NewAtom() END;
+                       PushLink(LocalStack, IntrinsicVariable[i])
     |'0'..'9':         PushValue(LocalStack, intrinsic - ORD('0'))
     |'A'..'F':         PushValue(LocalStack, intrinsic - ORD('A') + 10)
     |'`':              PushAtom(LocalStack, n);  n := Next(n)
 
     (* Stack manipulation *)
-    |'%':(* Dup     *) PushAtom(LocalStack, LocalStack)
+    |'"':(* Dup     *) PushAtom(LocalStack, LocalStack)
+    |'%':(* Swap    *) a := Next(LocalStack);
+                       SetNext(LocalStack, Next(a));
+                       SetNext(a, LocalStack);
+                       LocalStack := a
     |'#':(* Drop    *) LocalStack := Next(LocalStack)
 
     (* Basic operations *)
-    |'~':(* Not     *) LocalStack.data := BoolVal(LocalStack.data = 0)
+    |'~':(* Not     *) SetValue(LocalStack, BoolVal(LocalStack.data = 0))
     |'=':(* Equal   *) a := Next(LocalStack);
                        SetValue(a, BoolVal(
                            (IsValue(LocalStack) = IsValue(a))
                          & (LocalStack.data     = (a.data))));
                        LocalStack := Next(LocalStack)
     |'+':(* Plus    *) a := Next(LocalStack);
-                       SetValue(a, Value(LocalStack) + Value(a));
+                       SetValue(a, Value(a) + Value(LocalStack));
+                       LocalStack := Next(LocalStack)
+    |'-':(* Minus   *) a := Next(LocalStack);
+                       SetValue(a, Value(a) - Value(LocalStack));
                        LocalStack := Next(LocalStack)
     |'&':(* And     *) a := Next(LocalStack);
                        SetValue(a, BoolVal((Truth(LocalStack)) & (Truth(a))));
                        LocalStack := Next(LocalStack)
 
     (* Conditional *)
-    |'?':(* If      *) IF Truth(Next(LocalStack)) THEN
-                         PushLink(ProgramStack, n);
-                         n := Link(LocalStack);
-                         PushLink(ProgramStack, n)
+    |'?':(* If      *) IF Truth(LocalStack) THEN
+                         IF ~IsValue(n) THEN n := Link(n) END
+                       ELSE
+                         n := Next(n)
                        END;
-                       LocalStack := Next(Next(LocalStack))
+                       LocalStack := Next(LocalStack)
 
     (* Atom access *)
     |'_':(* is Link *) SetValue(LocalStack, BoolVal(~IsValue(LocalStack)))
@@ -307,17 +330,20 @@ BEGIN
                        n := PopLink(LocalStack);
                        PushLink(ProgramStack, n)
     |'@':(* Loop    *) n := Link(ProgramStack)
+
+    (*
     |"'":(* Exit1   *) ProgramStack := Next(ProgramStack);
                        n := Link(ProgramStack); ProgramStack := Next(ProgramStack)
     |'"':(* Exit2   *) ProgramStack := Next(ProgramStack); ProgramStack := Next(ProgramStack); ProgramStack := Next(ProgramStack);
                        n := Link(ProgramStack); ProgramStack := Next(ProgramStack)
+    *)
 
     (* Input and output *)
     |'R':(* Input   *) In.Char(c);  PushValue(LocalStack, ORD(c))
-    |'W':(* Output  *) WriteAtomAsChars(LocalStack); LocalStack := Next(LocalStack)
-    |'N':(* Newline *) wl
-    |'S':(* DebugOut*) DebugOut(LocalStack); wl
-
+    |'W':(* Output  *) WriteAtomAsChars(LocalStack); wfl; LocalStack := Next(LocalStack)
+    |'L':(* Newline *) wl
+    |'S':(* DumpStk *) DumpStack(LocalStack)
+    |'N':(* NIL     *) PushLink(LocalStack, NIL)
     ELSE wlc; wi(intrinsic); wc(' '); DebugChar(intrinsic); wc(' ');
       Fail("Unrecognised intrinsic code.")
     END
@@ -345,7 +371,8 @@ PROCEDURE Backtrack(matched: BOOLEAN);
 VAR prevInput: AtomPtr;
 BEGIN
   IF Link(LocalStack) = NIL THEN  (* Pattern is complete *)
-    LocalStack := Next(LocalStack); PushValue(LocalStack, BoolVal(matched)); Pattern := NIL
+    LocalStack := Next(LocalStack); PushValue(LocalStack, BoolVal(matched));
+    Pattern := NIL
   ELSE
     Pattern := PopLink(LocalStack);
     IF matched THEN LocalStack := Next(LocalStack) ELSE SetLink(Input, PopLink(LocalStack)) END;
@@ -388,29 +415,51 @@ END StartMatch;
 
 (* ------------------------------- Bootstrap -------------------------------- *)
 
-PROCEDURE BootstrapAddChar(VAR current: AtomPtr;  VAR escaped: BOOLEAN;  ch: CHAR);
+(* BootState:
+     0 - normal
+     1 - escaped
+     2 - number
+*)
+
+PROCEDURE BootstrapAddChar(VAR current: AtomPtr;  ch: CHAR);
 VAR nest: AtomPtr;
 BEGIN
-  IF escaped THEN
-    SetNext(current, NewAtom());  current := Next(current);  SetValue(current, ORD(ch));
-    escaped := FALSE
-  ELSE
-    CASE ch OF
-    |'^': escaped := TRUE
-    |'[': SetNext(current, NewAtom());  current := Next(current);  PushLink(LocalStack, current)
-    |']': nest := PopLink(LocalStack);  SetLink(nest, Next(nest));
-          SetNext(current, NIL);  current := nest;  SetNext(current, NIL)
-    ELSE  SetNext(current, NewAtom());  current := Next(current);  SetValue(current, ORD(ch))
-    END
+  IF (BootState = 2) & ((ch < '0') OR (ch > '9')) THEN
+    SetNext(current, NewAtom());  current := Next(current);
+    SetValue(current, BootNumber);
+    ws("Boot escaped number "); wi(BootNumber); wl;
+    BootState := 0;
+  END;
+  CASE BootState OF
+  |0: CASE ch OF
+      |'^': BootState := 1;
+      |'[': SetNext(current, NewAtom());  current := Next(current);
+            PushLink(LocalStack, current)
+      |']': nest := PopLink(LocalStack);  SetLink(nest, Next(nest));
+            SetNext(current, NIL);  current := nest;  SetNext(current, NIL)
+      ELSE  SetNext(current, NewAtom());  current := Next(current);
+            SetValue(current, ORD(ch))
+      END
+  |1: IF (ch >= '0') & (ch <= '9') THEN
+        BootNumber := ORD(ch) - ORD('0');
+        ws("Boot escaped number. First digit "); wi(BootNumber); wl;
+        BootState := 2;
+      ELSE
+        SetNext(current, NewAtom());  current := Next(current);
+        SetValue(current, ORD(ch));
+        BootState := 0
+      END
+  |2: BootNumber := BootNumber*10 + ORD(ch) - ORD('0')
+  ELSE Fail("Invalid boot state.")
   END
 END BootstrapAddChar;
 
 PROCEDURE BootstrapLoader(s: ARRAY OF CHAR): AtomPtr;
-VAR head, current: AtomPtr;  i: INTEGER;  escaped: BOOLEAN;
+VAR head, current: AtomPtr;  i: INTEGER;
 BEGIN i := 0;
-  head := NewAtom();  current := head;  escaped := FALSE;
+  head := NewAtom();  current := head;  BootState := 0;
   WHILE (i < LEN(s)) & (s[i] # 0X) DO
-    BootstrapAddChar(current, escaped, s[i]);  INC(i)
+    BootstrapAddChar(current, s[i]);  INC(i)
   END;
   current := Next(head);  FreeAtom(head);
 RETURN current END BootstrapLoader;
@@ -418,16 +467,15 @@ RETURN current END BootstrapLoader;
 PROCEDURE LoadBoostrap(): AtomPtr;
 VAR head, current, nest: AtomPtr;
     i:                   INTEGER;
-    escaped:             BOOLEAN;
     f:                   Files.File;
     r:                   Files.Rider;
     c:                   CHAR;
 BEGIN
-  head := NewAtom();  current := head;  escaped := FALSE;
+  head := NewAtom();  current := head;  BootState := 0;
   f := Files.Old("dam.boot");  Assert(f # NIL, "Expected file dam.boot.");
   Files.Set(r, f, 0);  Files.Read(r, c);
   WHILE ~r.eof DO
-    IF c # 0DX THEN BootstrapAddChar(current, escaped, c) END;
+    IF c # 0DX THEN BootstrapAddChar(current, c) END;
     Files.Read(r, c)
   END;
   current := Next(head);  FreeAtom(head);
@@ -525,12 +573,54 @@ BEGIN
   wsl(".")
 END CountUsed;
 
+
+PROCEDURE MarkClass(a: AtomPtr; c: CHAR; VAR class: ARRAY OF CHAR);
+BEGIN
+  WHILE a # NIL DO
+    class[(SYSTEM.VAL(Address, a) - SYSTEM.ADR(Memory[0])) DIV SIZE(Atom)] := c;
+    IF ~IsValue(a) THEN MarkClass(Link(a), c, class) END;
+    a := Next(a)
+  END
+END MarkClass;
+
+PROCEDURE DisplayUsed;
+CONST rowlength = 100;
+TYPE
+  AtomAsSetsPtr = POINTER TO AtomAsSets;
+  AtomAsSets = RECORD next, data: SET END;
+VAR sp: AtomAsSetsPtr;  i: INTEGER;  class: ARRAY AtomCount OF CHAR; a: AtomPtr;
+BEGIN
+  FOR i := 0 TO LEN(Memory)-1 DO
+    sp := SYSTEM.VAL(AtomAsSetsPtr, SYSTEM.ADR(Memory[i]));
+    IF 1 IN sp^.next THEN class[i] := "U" ELSE class[i] := "." END;
+  END;
+
+  MarkClass(Free, 'F', class);
+
+  FOR i := ORD('a') TO ORD('z') DO
+    MarkClass(IntrinsicVariable[i - ORD('a')], CHR(i), class)
+  END;
+
+  MarkClass(Program, 'P', class);
+  MarkClass(ProgramStack, 'p', class);
+  MarkClass(LocalStack, 'l', class);
+
+  ws("  ");
+  i := 0; WHILE i < AtomCount DO
+    wc(class[i]);
+    INC(i);
+    IF i MOD rowlength = 0 THEN wl; ws("  ") END
+  END;
+  IF i MOD rowlength # 0  THEN wl END;
+END DisplayUsed;
+
 PROCEDURE Garbage;
 TYPE
   AtomAsSetsPtr = POINTER TO AtomAsSets;
   AtomAsSets = RECORD next, data: SET END;
 VAR i: INTEGER; sp: AtomAsSetsPtr;
 BEGIN
+  wl; wsl("Garbage experiments.");
   wsl("Set all items garbage bit to zero.");
   FOR i := 0 TO LEN(Memory)-1 DO
     sp := SYSTEM.VAL(AtomAsSetsPtr, SYSTEM.ADR(Memory[i]));
@@ -545,34 +635,31 @@ BEGIN
   Used(ProgramStack);
   wsl("Mark LoopStack used.");
   Used(LoopStack);
-  wsl("Mark Boot used.");
-  Used(Boot);
 
-  CountUsed
+  CountUsed;  DisplayUsed
 END Garbage;
+
+
+(* ----------------------------- Startup code ----------------------------- *)
 
 BEGIN
   Assert(SYSTEM.VAL(Address, NIL) = 0, "Expected NIL to be zero.");
   InitMemory;
   Free := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory));
   (*TestNewAtom;*)
-  MakeIntrinsicVariables;
 
-  (*
-  TestIntrinsicCode("[-- Testing bootstrap nesting parser.]WL [more]WL [x]WL [[nested]WL] [abc[def]ghi]WL");
-  *)
+  MakeIntrinsicVariable(Input,    'i');
+  MakeIntrinsicVariable(Pattern,  'p');
+  MakeIntrinsicVariable(Sequence, 's');
 
   TestOberonCodedMatching;
 
-  (*
-  TestIntrinsicCode("[-- Testing stored programs.]WL [[stored program]WL]m: [within]WL m!");
-  *)
-
   Boot := LoadBoostrap();  (*DumpList(Boot);*)
-
   (* Run the bootstrap *)
   Program := Boot;  WHILE Program # NIL DO Step END;
 
+
+  wl; ws("Bootstrap complete, "); DumpStack(LocalStack);
 
   (* Garbage detection *)
   Garbage
