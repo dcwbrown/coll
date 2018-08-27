@@ -3,7 +3,7 @@ MODULE dam;  (* dam - data, algorithms and memory *)
 IMPORT Strings, Files, TextWriter, SYSTEM, In;
 
 CONST
-  AtomCount = 5000;
+  AtomCount = 6000;
 
 TYPE
   Address = SYSTEM.ADDRESS;
@@ -257,12 +257,23 @@ END MakeIntrinsicVariable;
 
 (* ----------------------------- Interpreter ------------------------------ *)
 
+PROCEDURE WriteListAsChars(a: AtomPtr);
+BEGIN
+  IF IsValue(a) THEN wu(Value(a)) ELSE
+    wc('[');
+    a := Link(a);
+    WHILE a # NIL DO  WriteListAsChars(a);  a := Next(a)  END;
+    wc(']')
+  END
+END WriteListAsChars;
+
 PROCEDURE WriteAtomAsChars(a: AtomPtr);
 BEGIN
   IF IsValue(a) THEN
-    wu(Value(a))
+    wc('`'); wu(Value(a))
   ELSE
-    a := Link(a);  WHILE a # NIL DO WriteAtomAsChars(a); a := Next(a) END
+    a := Link(a);
+    WHILE a # NIL DO  WriteListAsChars(a);  a := Next(a)  END
   END
 END WriteAtomAsChars;
 
@@ -636,7 +647,7 @@ BEGIN
   wsl("Mark LoopStack used.");
   Used(LoopStack);
 
-  CountUsed;  DisplayUsed
+  CountUsed;  (* DisplayUsed *)
 END Garbage;
 
 

@@ -38,20 +38,22 @@ L
 
 [OpenMatchList (pattern --)]#
 [ " .`'=s: ,p:
-              [ [OpenMatchList complete. s=]W s.`0+W [, Pattern=]W p.W `.WL ]#
+            [ [OpenMatchList complete. s=]W s.`0+W [, Pattern=]W p.W [.]WL ]#
 ] o:
 
 [MatchStep ( -- )
   Recursively matches patterns of sequences or alternatives.
-  Each nest pushes a link onto the stack that references the
-    link that references the nested pattern.
+  Each nest pushes the previos status onto the stack as follows:
+    [2] Pattern position of link to nested pattern
+    [1] Input position at start of nested pattern
+    [0] Sequence state of enclosing pattern
   The outer call to MatchStep is entered with a link to NIL
-    oon the stack.
+    on the stack.
 ]#
 [
   p.[Unexpectedly NIL pattern]a.!
   [p.._?[                                            [ [Pattern is link.]WL ]#
-      s. i. p. "o.!
+      s. i. p. ".o.!
     ]                                               [ [Pattern is value.]WL ]#
       p..                                           [ [Pattern char = ]W "W ]#
       i.. [                                           [, Input char = ]W "W ]#
@@ -69,18 +71,21 @@ L
   ]!
 ] m:
 
-[BackTrack ( -- )]#
-[ [                                                   [Backtrack entry, ]WS ]#
+[BackTrack ( NIL | prevseq previnp prevpat -- )]#
+[                                                   [ [Backtrack entry, ]WS ]#
   "_[Backtrack: expected link on top of stack.]a.!
-  [ " ~?[ [                                           [Pattern complete.]WL ]#
+  [ " ~?[                                           [ [Pattern complete.]WL ]#
           # e. 0p:
         ]
-    p!  [Backtrack - pattern updated to ']W p.W ['.]WL
-    [Backtrack - TOS = ]W SL ^1
-    [ m.?[#] i: ]!
+    p:                       [[Backtrack - pattern updated to ']W p.W ['.]WL]#
+                                                       [ [Backtrack (2) ]WS ]#
+    [ e.?[#] i: ]!
+                                                       [ [Backtrack (3) ]WS ]#
     "_~[Backtrack Expected save seq flag on top of stack.]a.!
-    .s:
-    [ m. s. =?[ p.,p: ] b.! ]!
+    s:
+                 [[Backtrack (4) p: ]W p.W [, i: ]W i.W [, s: ]W s.W [, ]W S]#
+    [ e. s. =?[ p.,p: ] b.! ]!
+                 [[Backtrack (5) p: ]W p.W [, i: ]W i.W [, s: ]W s.W [, ]W S]#
   ]!
 ] b:
 
@@ -109,4 +114,3 @@ L
   1 [test] ['te['s]t] t.!
   1 [fred] [/['bert]['fred]['harry]] t.!
   1 [fred] ['fr[/aeiou]d] t.!
-
