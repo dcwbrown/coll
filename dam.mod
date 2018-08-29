@@ -6,6 +6,15 @@ CONST
   AtomCount = 6000;
 
 TYPE
+
+(*
+  Atom types           Atom size (bytes)
+  ----------           -----------------
+  0 - Integer value    16
+  1 - Link             16
+  2 - Flat list        8+n
+*)
+
   Address = SYSTEM.ADDRESS;
   AtomPtr = POINTER [1] TO Atom;
   Atom = RECORD
@@ -13,6 +22,11 @@ TYPE
     data: Address   (* next MOD 2 = 0: integer value, 1: link address *)
   END;
 
+  AtomRef = RECORD
+    atom:   AtomPtr;
+    type:   INTEGER;
+    offset: Address;
+  END;
 
 VAR
   Abort:  BOOLEAN;

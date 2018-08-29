@@ -35,7 +35,7 @@ L
 
 [OpenMatchList (pattern --)]#
 [ " .`'=s: ,p:
-            [ [OpenMatchList complete. s=]W s.`0+W [, Pattern=]W p.W [.]WL ]#
+              [[OpenMatchList complete. s=]W s.`0+W [, Pattern=]W p.W [.]WL]#
 ] o:
 
 [MatchStep ( -- )
@@ -49,40 +49,40 @@ L
 ]#
 [
   p.[Unexpectedly NIL pattern]a.!
-  [p.._ [                                            [ [Pattern is link.]WL ]#
+  [p.._ [                                              [[Pattern is link.]WL]#
       s. i. p. ".o.!
-    ]?                                              [ [Pattern is value.]WL ]#
-      p..                                           [ [Pattern char = ]W "W ]#
-      i.. [                                           [, Input char = ]W "W ]#
+    ]?                                                [[Pattern is value.]WL]#
+      p..                                             [[Pattern char = ]W "W]#
+      i..                                             [[, Input char = ]W "W]#
       = e:
-      [                                                [, match: ]W e.`0+WL ]#
-                                                         [ [After match ]WS ]#
+                                                       [[, match: ]W e.`0+WL]#
+                                                           [[After match ]WS]#
       [e. [i.,i:]? ]!
-      [                                             [After input advance]WS ]#
-                           [ [Input is now ]W i.  [" [.]? #[nil]]! W [, ]WS ]#
-      [ s. e. =                                         [ [s=e: ]W "`0+WL   ]#
-        p.,                                             [ [p.,: ]W "~~`0+WL ]#
-        &                                               [ [&: ]W   "`0+WL   ]#
+                                                    [[After input advance]WS]#
+                             [[Input is now ]W i.  [" [.]? #[nil]]! W [, ]WS]#
+      [ s. e. =                                             [[s=e: ]W "`0+WL]#
+        p.,                                               [[p.,: ]W "~~`0+WL]#
+        &                                                   [[&: ]W   "`0+WL]#
         [p.,p:]? b.!
       ]!
   ]!
 ] m:
 
 [BackTrack ( NIL | prevseq previnp prevpat -- )]#
-[                                                   [ [Backtrack entry, ]WS ]#
+[                                                     [[Backtrack entry, ]WS]#
   "_[Backtrack: expected link on top of stack.]a.!
-  [ " ~ [                                           [ [Pattern complete.]WL ]#
+  [ " ~ [                                             [[Pattern complete.]WL]#
           # e. 0p:
         ]?
     p:                       [[Backtrack - pattern updated to ']W p.W ['.]WL]#
-                                                       [ [Backtrack (2) ]WS ]#
+                                                         [[Backtrack (2) ]WS]#
     [ e. [#]? i: ]!
-                                                       [ [Backtrack (3) ]WS ]#
+                                                         [[Backtrack (3) ]WS]#
     "_~[Backtrack Expected save seq flag on top of stack.]a.!
     s:
-                 [[Backtrack (4) p: ]W p.W [, i: ]W i.W [, s: ]W s.W [, ]W S]#
+                  [[Backtrack (4) p: ]W p.W [, i: ]W i.W [, s: ]W s.W [, ]WS]#
     [ e. s. =[ p.,p: ]? b.! ]!
-                 [[Backtrack (5) p: ]W p.W [, i: ]W i.W [, s: ]W s.W [, ]W S]#
+                  [[Backtrack (5) p: ]W p.W [, i: ]W i.W [, s: ]W s.W [, ]WS]#
   ]!
 ] b:
 
@@ -90,16 +90,16 @@ L
 [
   L[Testing match, input: ]W %"W % [, pattern: ]W "W L
   o.!  i:
-                                                                        [ S ]#
+                                                                          [S]#
   N
-  [                      [ [Step, input=']W i.W [', pattern=']W p.W [', ]WS ]#
+  [                        [[Step, input=']W i.W [', pattern=']W p.W [', ]WS]#
     m.!
     p.`@?
   ]!
 
-                                                       [ [Match exited, ]WS ]#
-  [Result:   ]W [ "_[[unexpected link on top of stack.]WL #]? `0+WL]!
-  [Expected: ]W [ "_[[unexpected link on top of stack.]WL #]? `0+WL]!
+                                                         [[Match exited, ]WS]#
+  [Result:   ]W ["_[[unexpected link on top of stack.]WL #]? `0+WL]!
+  [Expected: ]W ["_[[unexpected link on top of stack.]WL #]? `0+WL]!
 ] t:
 
   1 [Fred] ['Fred] t.!
