@@ -2,12 +2,18 @@ L
 [Bootstrapping ...]WL
 [-----------------]WL
 
+[
+  [`*]t S :
+  tS .S ! S WL
+]#
+
 [Assert: expression [message]a.!]#
 [%~ [WL]? #]a:
 
 [Some assertions:]WL
 
-0[Expected non-zero]a.!
+0 [Expected non-zero] a.!
+
 35=[3 not equal to 5]a.!
 
 [Counted loop test]#
@@ -19,6 +25,8 @@ L
   [Input echo loop test. Type a line of text: ]W
   [R"W A=~ `@?]!
 ]!
+
+X
 
 
 [Variables:
