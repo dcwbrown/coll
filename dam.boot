@@ -17,16 +17,15 @@ L
 35=[3 not equal to 5]a.!
 
 [Counted loop test]#
-[5[[Iteration ]W "`0+W L 1- "0=~ `@? ]!#]!
+[5[[Iteration ]W "`0+W L 1- "0=~ @? ]!#]!
 
 [Following counted loop test, ]WS
 
 [
   [Input echo loop test. Type a line of text: ]W
-  [R"W A=~ `@?]!
-]!
+  [R"W A=~ @?]!
+]#
 
-X
 
 
 [Variables:
@@ -78,10 +77,9 @@ X
 
 [BackTrack ( NIL | prevseq previnp prevpat -- )]#
 [                                                     [[Backtrack entry, ]WS]#
-  "_[Backtrack: expected link on top of stack.]a.!
-  [ " ~ [                                             [[Pattern complete.]WL]#
+  [ " _~ [                                             [[Pattern complete.]WL]#
           # e. 0p:
-        ]?
+         ]?
     p:                       [[Backtrack - pattern updated to ']W p.W ['.]WL]#
                                                          [[Backtrack (2) ]WS]#
     [ e. [#]? i: ]!
@@ -99,10 +97,10 @@ X
   L[Testing match, input: ]W %"W % [, pattern: ]W "W L
   o.!  i:
                                                                           [S]#
-  N
+  0
   [                        [[Step, input=']W i.W [', pattern=']W p.W [', ]WS]#
     m.!
-    p.`@?
+    p.@?
   ]!
 
                                                          [[Match exited, ]WS]#
