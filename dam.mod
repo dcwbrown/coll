@@ -26,10 +26,10 @@ TYPE
 
   Value* = RECORD
     header-:  BlockPtr; (* Address of current BlockHeader, NILif refkind is int. *)
-    kind-:    Address; (* Int or Link *)
-    data-:    Address; (* Integer value or adress of BlockHeader *)
+    kind-:    Address;  (* Int or Link *)
+    data-:    Address;  (* Integer value or adress of BlockHeader *)
     (* Private cache for link into flatlist, 0 if not flat *)
-    flatnext: Address; (* Offset of next value, 0 if none, or not flat *)
+    flatnext: Address;  (* Offset of next value, 0 if none, or not flat *)
   END;
 
   ValueStack = RECORD
@@ -425,62 +425,6 @@ BEGIN
 END Step;
 
 
-
-(* -------------------------------- Matching ------------------------------ *)
-
-(*
-PROCEDURE InitMatchList(pattern: BlockPtr);
-BEGIN
-  SetInt(Sequence, BoolVal(Value(pattern) = ORD("'")));
-  Pattern := Next(pattern);
-END InitMatchList;
-
-PROCEDURE Backtrack(matched: BOOLEAN);
-VAR prevInput: BlockPtr;
-BEGIN
-  IF Link(Arg) = NIL THEN  ( * Pattern is complete * )
-    Arg := Next(Arg); PushValue(Arg, BoolVal(matched));
-    Pattern := NIL
-  ELSE
-    Pattern := PopLink(Arg);
-    IF matched THEN Arg := Next(Arg) ELSE SetLink(Input, PopLink(Arg)) END;
-    Assert(IsInt(Arg), "Expected Saved Sequence value on local stk.");
-    SetInt(Sequence, Value(Arg));  Arg := Next(Arg);
-    IF matched = (Value(Sequence)#0) THEN
-      Pattern := Next(Pattern)
-    ELSE ( * Failure during sequence, or success of a choice * )
-      Backtrack(matched)
-    END
-  END
-END Backtrack;
-
-PROCEDURE MatchStep;
-VAR equal: BOOLEAN;
-BEGIN
-  Assert(Pattern # NIL, "MatchStep entered with unexpectedly NIL pattern.");
-  IF IsInt(Pattern) THEN
-    equal := Value(Pattern) = Value(Link(Input));
-    IF equal THEN SetLink(Input, Next(Link(Input))) END;
-    IF ((Value(Sequence)#0) = equal) & (Next(Pattern) # NIL) THEN  ( * move to next in list * )
-      Pattern := Next(Pattern)
-    ELSE  ( * look no further in list * )
-      Backtrack(equal)
-    END
-  ELSE
-    PushValue(Arg, Value(Sequence));
-    PushLink(Arg, Link(Input));
-    PushLink(Arg, Pattern);
-    InitMatchList(Link(Pattern))
-  END;
-END MatchStep;
-
-PROCEDURE StartMatch(pattern: BlockPtr);
-BEGIN
-  PushLink(Arg, NIL);
-  InitMatchList(pattern)
-END StartMatch;
-*)
-
 (* ------------------------------- Bootstrap -------------------------------- *)
 
 (* BootState:
@@ -489,59 +433,44 @@ END StartMatch;
      2 - number
 *)
 
-PROCEDURE AddBootstrapBlock(VAR current: BlockPtr);
+PROCEDURE AddBootstrapBlock(VAR current: BlockPtr; data: Address);
 BEGIN
   current.next := SYSTEM.VAL(Address, NewBlock()) + current.next MOD 4;
-  current := SYSTEM.VAL(BlockPtr, current.next - current.next MOD 4)
+  current := SYSTEM.VAL(BlockPtr, current.next - current.next MOD 4);
+  current.data := data
 END AddBootstrapBlock;
 
 PROCEDURE BootstrapAddChar(VAR current: BlockPtr;  ch: CHAR);
 VAR link: BlockPtr;
 BEGIN
   IF (BootState = 2) & ((ch < '0') OR (ch > '9')) THEN
-    AddBootstrapBlock(current);  current.data := BootNumber;
+    AddBootstrapBlock(current, BootNumber);
     ws("Boot escaped number "); wi(BootNumber); wl;
     BootState := 0;
   END;
   CASE BootState OF
   |0: CASE ch OF
       |'^': BootState := 1;
-      |'[': AddBootstrapBlock(current);  BootStack[BootTop] := current;  INC(BootTop);
-      |']': (*
-            ws("']' handler. current.next "); wx(current.next, 16);
-            ws(", current.data "); wx(current.data, 16); wl;
-            *)
-            DEC(BootTop);  link := BootStack[BootTop];
+      |'[': AddBootstrapBlock(current, 0);  BootStack[BootTop] := current;  INC(BootTop);
+      |']': DEC(BootTop);  link := BootStack[BootTop];
             link.data := link.next - link.next MOD 4;
             link.next := Link;
             Assert(current.next - current.next MOD 4 = 0, "Expected current.next to be at EOL in ']'.");
             current := link;
-      ELSE  AddBootstrapBlock(current);  current.data := ORD(ch)
+      ELSE  AddBootstrapBlock(current, ORD(ch))
       END
   |1: IF (ch >= '0') & (ch <= '9') THEN
         BootNumber := ORD(ch) - ORD('0');
         ws("Boot escaped number. First digit "); wi(BootNumber); wl;
         BootState := 2;
       ELSE
-        AddBootstrapBlock(current);  current.data := ORD(ch);
+        AddBootstrapBlock(current, ORD(ch));
         BootState := 0
       END
   |2: BootNumber := BootNumber*10 + ORD(ch) - ORD('0')
   ELSE Fail("Invalid boot state.")
   END
 END BootstrapAddChar;
-
-(*
-PROCEDURE BootstrapLoader(s: ARRAY OF CHAR): BlockPtr;
-VAR head, current: BlockPtr;  i: INTEGER;
-BEGIN i := 0; BootTop := 0;
-  head := NewBlock();  current := head;  BootState := 0;
-  WHILE (i < LEN(s)) & (s[i] # 0X) DO
-    BootstrapAddChar(current, s[i]);  INC(i)
-  END;
-  current := SYSTEM.VAL(BlockPtr, head.next - head.next MOD 4);
-RETURN current END BootstrapLoader;
-*)
 
 PROCEDURE LoadBoostrap(): BlockPtr;
 VAR head, current, nest: BlockPtr;
@@ -560,54 +489,6 @@ BEGIN BootTop := 0;
   current := SYSTEM.VAL(BlockPtr, head.next - head.next MOD 4);
 RETURN current END LoadBoostrap;
 
-
-(* ----------------------------- Test harness ----------------------------- *)
-
-(*
-PROCEDURE TestNewBlock;
-VAR i: INTEGER; p: BlockPtr;
-BEGIN
-  FOR i := 1 TO LEN(Memory) DO
-    p := NewBlock();
-    wi(i); ws(" at "); wx(SYSTEM.VAL(Address, p), 1); wl;
-  END;
-  wsl("Allocated LEN(Memory) atoms successfully, trying one more, which should fail with an out of memory error.");
-  p := NewBlock()
-END TestNewBlock;
-
-PROCEDURE TestIntrinsicCode(s: ARRAY OF CHAR);
-BEGIN
-  InitLink(Program, SYSTEM.VAL(Address, BootstrapLoader(s)));
-  WHILE IsLink(Program) DO Step END;
-END TestIntrinsicCode;
-
-PROCEDURE TestOberonCodedMatch(expect: BOOLEAN; i, p: ARRAY OF CHAR);
-VAR matched: BOOLEAN;
-BEGIN
-  ws("Test match input '"); ws(i); ws("', pattern '"); ws(p); ws("',  ");
-  StartMatch(BootstrapLoader(p));
-  SetLink(Input, BootstrapLoader(i));
-
-  WHILE Pattern # NIL DO MatchStep END;
-
-  matched := Value(Arg)#0;  Arg := Next(Arg);
-  ws("Matched: "); wb(matched);
-  Assert(matched = expect, " .. expected opposite.");
-  wsl(" as expected.");
-END TestOberonCodedMatch;
-
-PROCEDURE TestOberonCodedMatching;
-BEGIN
-  TestOberonCodedMatch(TRUE,  "test", "'test");
-  TestOberonCodedMatch(FALSE, "test", "'toast");
-  TestOberonCodedMatch(TRUE,  "t",    "/tuv");
-  TestOberonCodedMatch(TRUE,  "t",    "/rst");
-  TestOberonCodedMatch(FALSE, "t",    "/abc");
-  TestOberonCodedMatch(TRUE,  "test", "'te['s]t");
-  TestOberonCodedMatch(TRUE,  "fred", "/['bert]['fred]['harry]");
-  TestOberonCodedMatch(TRUE,  "fred", "'fr[/aeiou]d")
-END TestOberonCodedMatching;
-*)
 
 (* ------------------ Garbage collection experimentiation ----------------- *)
 
@@ -726,22 +607,11 @@ BEGIN
   Assert(SYSTEM.VAL(Address, NIL) = 0, "Expected NIL to be zero.");
   ws("Address size is "); wi(SIZE(Address)*8); wsl(" bits.");
   InitMemory;
-  (*TestNewBlock;*)
-
-  (*
-  MakeIntrinsicVariable(Input,    'i');
-  MakeIntrinsicVariable(Pattern,  'p');
-  MakeIntrinsicVariable(Sequence, 's');
-  *)
-
-  (*
-  TestOberonCodedMatching;
-  *)
 
   InitLink(Boot, SYSTEM.VAL(Address, LoadBoostrap()));  (*DumpList(Boot);*)
+
   (* Run the bootstrap *)
   Program := Boot;  WHILE IsLink(Program) DO Step END;
-
 
   wl; ws("Bootstrap complete, "); DumpStack(Arg);
 
