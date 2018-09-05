@@ -5,6 +5,7 @@ IMPORT Strings, Files, TextWriter, SYSTEM, In;
 CONST
   BlockCount = 6000;
   StackDepth = 100;
+  MaxBuffer  = 1024;
   MaxLines   = 500;
 
   (* Kinds *)
@@ -15,6 +16,7 @@ CONST
 TYPE
 
   Address = SYSTEM.ADDRESS;
+  Byte    = SYSTEM.INT8;
 
   BlockHeader = RECORD
     next: Address;  (* MOD 4 -> Int (0), Link (1) or FLat (2). *)
@@ -25,7 +27,7 @@ TYPE
   BlockPtr* = POINTER [1] TO BlockHeader;
 
   Value* = RECORD
-    header-:  BlockPtr; (* Address of current BlockHeader, NILif refkind is int. *)
+    header-:  BlockPtr; (* Address of current BlockHeader, NIL if refkind is int. *)
     kind-:    Address;  (* Int or Link *)
     data-:    Address;  (* Integer value or adress of BlockHeader *)
     (* Private cache for link into flatlist, 0 if not flat *)
@@ -55,6 +57,9 @@ VAR
   BootNumber: INTEGER;
   BootStack:  ARRAY 10 OF BlockPtr;
   BootTop:    INTEGER;
+
+  FlatListBuffer: ARRAY MaxBuffer OF Byte;
+  FlatListOffset: Address;
 
 (* ---------------------- Current match/execution state --------------------- *)
 
@@ -124,26 +129,30 @@ BEGIN
 END InitInt;
 
 PROCEDURE ExpandFlatValue(VAR v: Value; addr: Address);
-VAR byte: SYSTEM.INT8;
+VAR byte: Byte;
 BEGIN
   SYSTEM.GET(addr, byte);
-  IF byte >= 0 THEN  (* A single byte positive integer (0..127) *)
-    v.kind := Int;
-    v.data := byte;
+  IF byte >= 0 THEN
+    (* ws(" -singlebyte- ");*)
+    v.kind := Int; v.data := byte
   ELSE
-    (* First byte of muti-byte value *)
     v.kind := byte DIV 64 MOD 2;
-    v.data := byte * 4 DIV 4;  (* Sign extend 6 to 8 bits *)
-    INC(addr);  SYSTEM.GET(addr, byte);
+    (* First byte of muti-byte value *)
+    byte := byte * 4;  (* Sign extend 6 to 8 bits *)
+    v.data := byte DIV 4;
+    INC(addr);
+    SYSTEM.GET(addr, byte);
     (* Middle bytes of multi-byte value *)
     WHILE byte < 0 DO
       v.data := v.data * 128  +  byte MOD 128;
-      INC(addr);  SYSTEM.GET(addr, byte)
+      INC(addr);
+      SYSTEM.GET(addr, byte)
     END;
     (* Last byte of multi-byte value *)
     v.data := v.data * 128 + byte
   END;
   INC(addr);
+  Assert(addr <= v.header.data, "Decoded flat value extended past end of flat block.");
   IF addr < v.header.data THEN v.flatnext := addr ELSE v.flatnext := 0 END
 END ExpandFlatValue;
 
@@ -157,7 +166,6 @@ BEGIN
     v.data     := v.header.data;
     v.flatnext := 0
   ELSE  (* Set up for link into flat list *)
-    v.kind := Link;
     ExpandFlatValue(v, blockheader + SIZE(BlockHeader))
   END
 END InitLink;
@@ -492,22 +500,215 @@ RETURN current END LoadBoostrap;
 
 (* ------------------ Garbage collection experimentiation ----------------- *)
 
-(*
-PROCEDURE Used(a: BlockPtr);
-TYPE
-  BlockAsSetsPtr = POINTER TO BlockAsSets;
-  BlockAsSets = RECORD next, data: SET END;
-VAR sp: BlockAsSetsPtr;
+PROCEDURE ClearGarbageFlags;
+VAR i: INTEGER;
 BEGIN
-  IF (a # NIL) & ((a.next MOD 4) < 2) THEN  ( * If not already marked used * )
-    WHILE a # NIL DO
-      IF ~IsInt(a) THEN Used(Link(a)) END;
-      sp := SYSTEM.VAL(BlockAsSetsPtr, a);
-      INCL(sp.next, 1);
-      a := Next(a)
-    END
+  FOR i := 0 TO BlockCount-1 DO
+    Memory[i].next := Memory[i].next - Memory[i].next MOD 16 + Memory[i].next MOD 4
   END
-END Used;
+END ClearGarbageFlags;
+
+PROCEDURE GetGarbageRefCount(b: BlockPtr): Address;
+BEGIN RETURN b.next DIV 4 MOD 4 END GetGarbageRefCount;
+
+PROCEDURE SetGarbageCount(b: BlockPtr; n: Address);
+BEGIN
+  b.next := b.next
+          - b.next MOD 16
+          + n * 4
+          + b.next MOD 4;
+END SetGarbageCount;
+
+PROCEDURE GetNext(b: BlockPtr): BlockPtr;
+BEGIN RETURN SYSTEM.VAL(BlockPtr, b.next - b.next MOD 16) END GetNext;
+
+PROCEDURE AddGarbageCount(b: BlockPtr; n: INTEGER);
+VAR count: Address; uncounted: BOOLEAN; link: BlockPtr;
+BEGIN
+  uncounted := TRUE;
+  WHILE (b # NIL) & uncounted DO
+    count := GetGarbageRefCount(b);
+    uncounted := count = 0;
+    INC(count, n); n := 1;
+    IF count > 2 THEN count := 2 END;
+    (*ws("SetGarbageCount "); wx(SYSTEM.VAL(Address, b), 16); ws(" to "); wi(count); wl;*)
+    SetGarbageCount(b, count);
+    IF uncounted & (b.next MOD 4 = Link) THEN
+      AddGarbageCount(SYSTEM.VAL(BlockPtr, b.data), 2)
+    END;
+    b := GetNext(b)
+  END
+END AddGarbageCount;
+
+PROCEDURE SetFreeToThree;
+VAR b: BlockPtr;
+BEGIN b := Free;
+  WHILE b # NIL DO
+    Assert(GetGarbageRefCount(b) = 0, "Expected free block to have 0 garbage count.");
+    SetGarbageCount(b, 3);
+    b := GetNext(b)
+  END
+END SetFreeToThree;
+
+PROCEDURE MarkGarbageBlock(b: Value);
+BEGIN
+  Assert(IsLink(b), "MarkGarbageBlock expected value to be a link.");
+  AddGarbageCount(b.header, 2)
+END MarkGarbageBlock;
+
+PROCEDURE MarkGarbage;
+VAR i: INTEGER;
+BEGIN
+  FOR i := 0 TO Return.top - 1 DO MarkGarbageBlock(Return.stk[i]) END;
+  FOR i := 0 TO Arg.top - 1 DO MarkGarbageBlock(Arg.stk[i]) END;
+  FOR i := 0 TO Loop.top - 1 DO MarkGarbageBlock(Loop.stk[i]) END;
+  MarkGarbageBlock(Boot);
+  SetFreeToThree
+END MarkGarbage;
+
+PROCEDURE ShowGarbage;
+CONST rowlength = 100;
+VAR i: INTEGER;
+BEGIN
+  i := 0; WHILE i < BlockCount DO
+    IF i MOD rowlength = 0 THEN ws("  ") END;
+    wc(CHR(Memory[i].next DIV 4 MOD 4 + ORD('0')));
+    INC(i);
+    IF i MOD rowlength = 0 THEN wl END
+  END;
+  IF i MOD rowlength # 0  THEN wl END;
+END ShowGarbage;
+
+PROCEDURE GetPotentiallyFlatCount(block: BlockPtr): Address;
+VAR count: Address;
+BEGIN count := 0;
+  WHILE (block # NIL) & (GetGarbageRefCount(block) = 1) DO
+    INC(count);  block := GetNext(block)
+  END;
+RETURN count END GetPotentiallyFlatCount;
+
+PROCEDURE whexbytes(VAR buf: ARRAY OF Byte; len: Address);
+VAR i: Address;
+BEGIN
+  FOR i := 0 TO len-1 DO
+    wx(buf[i],2);
+    IF i < len-1 THEN wc(" ") END
+  END
+END whexbytes;
+
+PROCEDURE- BitwiseAnd(a,b: LONGINT): LONGINT "((a) & (b))";
+
+PROCEDURE MakeFlatValue(VAR buf: ARRAY OF Byte; VAR offset: Address; type, data: Address);
+VAR val: ARRAY 10 OF Byte; i: INTEGER;
+BEGIN
+  IF (type = Int) & (data >= 0) & (data < 128) THEN
+    (* The compressed values is just the data itself *)
+    buf[offset] := SYSTEM.VAL(Byte, data);  INC(offset)
+  ELSE
+    i := 0;
+    REPEAT
+      val[i] := SYSTEM.VAL(Byte, data MOD 128);
+      data := data DIV 128;  (* Note, sign extends *)
+      INC(i)
+    UNTIL (i >= 10) OR (((data = -1) OR (data = 0)) & (i > 1));
+
+    (*
+    ws(" -val1- "); whexbytes(val, i); ws(", "); wfl;
+    *)
+
+    IF BitwiseAnd(val[i-1], 60H) # BitwiseAnd(data, 60H) THEN
+      val[i] := SYSTEM.VAL(Byte, data); INC(i)
+    END;
+
+    (*
+    ws(" -val2- "); whexbytes(val, i); ws(", "); wfl;
+    *)
+
+    DEC(i);
+    buf[offset] := val[i] MOD 64 + SYSTEM.VAL(Byte, type*64) + 127+1;
+    INC(offset); DEC(i);
+    WHILE i > 0 DO buf[offset] := val[i]+127+1; INC(offset); DEC(i) END;
+    buf[offset] := val[0]; INC(offset)
+  END
+END MakeFlatValue;
+
+PROCEDURE Flatten(block: BlockPtr): BlockPtr;
+VAR b: BlockPtr; buf: ARRAY MaxBuffer OF Byte; i: INTEGER;
+BEGIN
+  i := 0;  b := block;
+  WHILE GetGarbageRefCount(b) = 1 DO
+    MakeFlatValue(FlatListBuffer, FlatListOffset, b.data, b.next MOD 1);
+    b := GetNext(b)
+  END;
+RETURN b END Flatten;
+
+PROCEDURE MoveContigousToBufferSpace(block: BlockPtr);
+VAR next: BlockPtr; count: Address;
+BEGIN
+  WHILE block # NIL DO
+    next := GetNext(block);
+    IF (next # NIL) & (GetPotentiallyFlatCount(next) > 2) THEN
+      block.next := SYSTEM.VAL(Address, Flatten(next)) + block.next MOD 4;
+      next := NIL  (* Prototype only collects one block *)
+    END;
+    block := next
+  END
+END MoveContigousToBufferSpace;
+
+PROCEDURE TestMakeFlatValue(t, a: Address; verbose: BOOLEAN);
+VAR buf: ARRAY 10 OF Byte; i, offset: Address; v: Value;
+  dummy: BlockHeader;
+BEGIN
+  offset := 0;
+  IF verbose THEN wx(a,16) END;
+  MakeFlatValue(buf, offset, t, a);
+  IF verbose THEN
+    ws(" flattened: ");
+    whexbytes(buf, offset)
+  END;
+
+  v.header := SYSTEM.VAL(BlockPtr, SYSTEM.ADR(dummy));
+  dummy.data := SYSTEM.ADR(buf) + offset;
+  ExpandFlatValue(v, SYSTEM.ADR(buf));
+
+  IF verbose THEN
+    ws(", decoded: type "); wx(v.kind,1); ws(" data "); wx(v.data,16); wl
+  END;
+  Assert(t=v.kind, "Flat value type lost.");
+  Assert(a=v.data, "Flat value data lost.");
+  Assert(v.flatnext = 0, "More bytes encoed than decoded.");
+END TestMakeFlatValue;
+
+PROCEDURE TestFlattening;
+VAR a: Address;
+BEGIN
+  TestMakeFlatValue(0, 0,     TRUE);
+  TestMakeFlatValue(0, 1,     TRUE);
+  TestMakeFlatValue(0, 2,     TRUE);
+  TestMakeFlatValue(0, 127,   TRUE);
+  TestMakeFlatValue(0, 128,   TRUE);
+  TestMakeFlatValue(0, 2047,  TRUE);
+  TestMakeFlatValue(0, 2048,  TRUE);
+  TestMakeFlatValue(0, 4095,  TRUE);
+  TestMakeFlatValue(0, 4096,  TRUE);
+  TestMakeFlatValue(0, -1,    TRUE);
+  TestMakeFlatValue(0, -2,    TRUE);
+  TestMakeFlatValue(0, -127,  TRUE);
+  TestMakeFlatValue(0, -128,  TRUE);
+  TestMakeFlatValue(0, -2048, TRUE);
+  TestMakeFlatValue(0, -2049, TRUE);
+  TestMakeFlatValue(0, -4096, TRUE);
+  TestMakeFlatValue(0, -4097, TRUE);
+  TestMakeFlatValue(1, 0,     TRUE);
+  TestMakeFlatValue(1, 1,     TRUE);
+  TestMakeFlatValue(1, 2,     TRUE);
+  TestMakeFlatValue(1, 127,   TRUE);
+
+  FOR a := 0 TO 5000000 DO TestMakeFlatValue(0, a, FALSE) END;
+  FOR a := 0 TO 5000000 DO TestMakeFlatValue(0, -a, FALSE) END;
+
+END TestFlattening;
+(*
 
 PROCEDURE CountUsed;
 TYPE
@@ -619,6 +820,9 @@ BEGIN
   (*
   Garbage
   *)
+  MarkGarbage; ShowGarbage;
+
+  TestFlattening
 
 END dam.
 
