@@ -117,23 +117,42 @@ BEGIN
   END
 END wu;
 
+(* ---------------------------- FLattened values ---------------------------- *)
 
-(* --------------------------------- Values --------------------------------- *)
+PROCEDURE- BitwiseAnd(a,b: LONGINT): LONGINT "((a) & (b))";
 
-PROCEDURE InitInt(VAR v: Value; i: Address);
+PROCEDURE CompressValue(kind, data: Address; VAR buf: ARRAY OF Byte; VAR offset: Address);
+VAR val: ARRAY 10 OF Byte; i: INTEGER;
 BEGIN
-  v.header   := NIL;
-  v.kind     := Int;
-  v.data     := i;
-  v.flatnext := 0;
-END InitInt;
+  Assert(kind < 2, "CompressValue expected Int or Link type.");
+  IF (kind = Int) & (data >= 0) & (data < 128) THEN
+    (* The compressed values is just the data itself *)
+    buf[offset] := SYSTEM.VAL(Byte, data);  INC(offset)
+  ELSE
+    i := 0;
+    REPEAT
+      val[i] := SYSTEM.VAL(Byte, data MOD 128);
+      data := data DIV 128;  (* Note, sign extends *)
+      INC(i)
+    UNTIL (i >= 10) OR (((data = -1) OR (data = 0)) & (i > 1));
 
-PROCEDURE ExpandFlatValue(VAR v: Value; addr: Address);
+    IF BitwiseAnd(val[i-1], 60H) # BitwiseAnd(data, 60H) THEN
+      val[i] := SYSTEM.VAL(Byte, data); INC(i)
+    END;
+
+    DEC(i);
+    buf[offset] := val[i] MOD 64 + SYSTEM.VAL(Byte, kind*64) + 127+1;
+    INC(offset); DEC(i);
+    WHILE i > 0 DO buf[offset] := val[i]+127+1; INC(offset); DEC(i) END;
+    buf[offset] := val[0]; INC(offset)
+  END
+END CompressValue;
+
+PROCEDURE ExpandValue(addr: Address; VAR v: Value);
 VAR byte: Byte;
 BEGIN
   SYSTEM.GET(addr, byte);
   IF byte >= 0 THEN
-    (* ws(" -singlebyte- ");*)
     v.kind := Int; v.data := byte
   ELSE
     v.kind := byte DIV 64 MOD 2;
@@ -154,7 +173,19 @@ BEGIN
   INC(addr);
   Assert(addr <= v.header.data, "Decoded flat value extended past end of flat block.");
   IF addr < v.header.data THEN v.flatnext := addr ELSE v.flatnext := 0 END
-END ExpandFlatValue;
+END ExpandValue;
+
+
+
+(* --------------------------------- Values --------------------------------- *)
+
+PROCEDURE InitInt(VAR v: Value; i: Address);
+BEGIN
+  v.header   := NIL;
+  v.kind     := Int;
+  v.data     := i;
+  v.flatnext := 0;
+END InitInt;
 
 PROCEDURE InitLink(VAR v: Value; blockheader: Address);
 BEGIN
@@ -166,7 +197,7 @@ BEGIN
     v.data     := v.header.data;
     v.flatnext := 0
   ELSE  (* Set up for link into flat list *)
-    ExpandFlatValue(v, blockheader + SIZE(BlockHeader))
+    ExpandValue(blockheader + SIZE(BlockHeader), v)
   END
 END InitLink;
 
@@ -186,7 +217,7 @@ END Fetch;
 PROCEDURE Next*(VAR v: Value);
 BEGIN
   Assert(IsLink(v), "Next expects reference that is a Link, not an Int.");
-  IF v.flatnext # 0 THEN  ExpandFlatValue(v, v.flatnext)
+  IF v.flatnext # 0 THEN  ExpandValue(v.flatnext, v)
   ELSIF v.header.next DIV 4 = 0 THEN InitInt(v, 0)
   ELSE InitLink(v, v.header.next - v.header.next MOD 4)
   END
@@ -596,51 +627,16 @@ BEGIN
   END
 END whexbytes;
 
-PROCEDURE- BitwiseAnd(a,b: LONGINT): LONGINT "((a) & (b))";
-
-PROCEDURE MakeFlatValue(VAR buf: ARRAY OF Byte; VAR offset: Address; type, data: Address);
-VAR val: ARRAY 10 OF Byte; i: INTEGER;
-BEGIN
-  IF (type = Int) & (data >= 0) & (data < 128) THEN
-    (* The compressed values is just the data itself *)
-    buf[offset] := SYSTEM.VAL(Byte, data);  INC(offset)
-  ELSE
-    i := 0;
-    REPEAT
-      val[i] := SYSTEM.VAL(Byte, data MOD 128);
-      data := data DIV 128;  (* Note, sign extends *)
-      INC(i)
-    UNTIL (i >= 10) OR (((data = -1) OR (data = 0)) & (i > 1));
-
-    (*
-    ws(" -val1- "); whexbytes(val, i); ws(", "); wfl;
-    *)
-
-    IF BitwiseAnd(val[i-1], 60H) # BitwiseAnd(data, 60H) THEN
-      val[i] := SYSTEM.VAL(Byte, data); INC(i)
-    END;
-
-    (*
-    ws(" -val2- "); whexbytes(val, i); ws(", "); wfl;
-    *)
-
-    DEC(i);
-    buf[offset] := val[i] MOD 64 + SYSTEM.VAL(Byte, type*64) + 127+1;
-    INC(offset); DEC(i);
-    WHILE i > 0 DO buf[offset] := val[i]+127+1; INC(offset); DEC(i) END;
-    buf[offset] := val[0]; INC(offset)
-  END
-END MakeFlatValue;
-
 PROCEDURE Flatten(block: BlockPtr): BlockPtr;
-VAR b: BlockPtr; buf: ARRAY MaxBuffer OF Byte; i: INTEGER;
+VAR v: Value; buf: ARRAY MaxBuffer OF Byte; i: INTEGER;
 BEGIN
-  i := 0;  b := block;
-  WHILE GetGarbageRefCount(b) = 1 DO
-    MakeFlatValue(FlatListBuffer, FlatListOffset, b.data, b.next MOD 1);
-    b := GetNext(b)
+  InitLink(v, SYSTEM.VAL(Address, block));
+  i := 0;
+  WHILE IsLink(v) & (GetGarbageRefCount(v.header) = 1) DO
+    CompressValue(v.kind, v.data, FlatListBuffer, FlatListOffset);
+    Next(v)
   END;
-RETURN b END Flatten;
+RETURN v.header END Flatten;
 
 PROCEDURE MoveContigousToBufferSpace(block: BlockPtr);
 VAR next: BlockPtr; count: Address;
@@ -661,15 +657,12 @@ VAR buf: ARRAY 10 OF Byte; i, offset: Address; v: Value;
 BEGIN
   offset := 0;
   IF verbose THEN wx(a,16) END;
-  MakeFlatValue(buf, offset, t, a);
-  IF verbose THEN
-    ws(" flattened: ");
-    whexbytes(buf, offset)
-  END;
+  CompressValue(t, a, buf, offset);
+  IF verbose THEN ws(" flattened: "); whexbytes(buf, offset) END;
 
   v.header := SYSTEM.VAL(BlockPtr, SYSTEM.ADR(dummy));
   dummy.data := SYSTEM.ADR(buf) + offset;
-  ExpandFlatValue(v, SYSTEM.ADR(buf));
+  ExpandValue(SYSTEM.ADR(buf), v);
 
   IF verbose THEN
     ws(", decoded: type "); wx(v.kind,1); ws(" data "); wx(v.data,16); wl
