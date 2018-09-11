@@ -7,7 +7,7 @@ CONST
   StackDepth = 100;
   MaxBuffer  = 1024;
   MaxLines   = 8000;
-  BlockSize  = 512; (* 8192; *)
+  BlockSize  = 512; (* Max 2048 limited by Param field in next *)
   MinFlatRun = 3;
 
   (* Usage markings *)
@@ -23,24 +23,37 @@ CONST
 TYPE
 
   Address = SYSTEM.ADDRESS;
-  Byte    = SYSTEM.INT8;
+  Int8    = SYSTEM.INT8;
 
   AtomHeader = RECORD
-    next: Address;  (* All headers 16 byte aligned. Bottom 4 bits are
-                       of next are used as: 2/GC marking, 2/kind *)
+    next: Address;  (* All headers 16 byte aligned. Bits are used as follows:
+                         60/addr - Bits 63-4 of link to next next atom,
+                                   bits 3-0 are always 0.
+                                   The top bits of the link are used as
+                                   a parameter - see below.
+                         2/mark  - collection state of this atom
+                         2/kind  - type of this atom - int/link/flat
+                    *)
     data: Address;  (* Integer value, link address or flatlist limit. *)
     (* Flat list content immediately follows the header and continues
-       to the limit stored in .data. *)
+       to the limit stored in .data.
+       Links (whether in the next or data field) have the form:
+         1/unused - avoid conflict with signed operations
+         11/param - of link e.g. offset from first byte of header into
+                    compressed list
+         52/addr  - Link address (up to 4.5 PB = 4500TB)
+    *)
   END;
-
   AtomPtr* = POINTER [1] TO AtomHeader;
 
+  (* Value can be a singular value, or the current value of a list. *)
   Value* = RECORD
-    kind-:    Address;  (* Int or Link *)
-    data-:    Address;  (* Integer value or adress of AtomHeader *)
-    header-:  AtomPtr;  (* Address of current AtomHeader if Link. *)
+    kind-:   Address;  (* Int or Link *)
+    data-:   Address;  (* Integer value or adress of AtomHeader *)
+    header-: AtomPtr;  (* Address of current AtomHeader if Link. *)
     (* Private cache for link into flatlist, 0 if not flat *)
-    flatnext: Address;  (* Offset of next value, 0 if none, or not flat *)
+    pos:     Address;  (* Address of this value, 0 if none, or not flat *)
+    next:    Address;  (* Address of next value, 0 if none, or not flat *)
   END;
 
   ValueStack = RECORD
@@ -50,7 +63,7 @@ TYPE
 
   BlockPtr = POINTER TO Block;
   Block = RECORD
-    bytes: ARRAY BlockSize OF Byte;
+    bytes: ARRAY BlockSize OF Int8;
     next: BlockPtr;
     in: Address;
   END;
@@ -79,8 +92,21 @@ VAR
   (* Dump wvalue execution. *)
   DumpOn: BOOLEAN;
 
-(* ---------------------- Current match/execution state --------------------- *)
 
+(* ------------- C functions to extract parts of the next field. ------------ *)
+
+PROCEDURE- ATOMPTR(a: Address): AtomPtr "(dam_AtomPtr)((a) & 0x000FFFFFFFFFFFF0)";
+PROCEDURE- PTR    (a: Address): Address "((a) & 0x000FFFFFFFFFFFF0)";
+PROCEDURE- LINK   (a: Address): Address "((a) & 0x7FFFFFFFFFFFFFF0)";
+PROCEDURE- KIND   (a: Address): Address "((a) & 3)";
+PROCEDURE- USAGE  (a: Address): Address "(((a)>>2) & 3)";
+PROCEDURE- PARAM  (a: Address): Address "(((a)>>52) & 0x7FF)";
+
+PROCEDURE- SETPTR  (VAR a: Address; p: AtomPtr) "*((INT64*)(a)) = ((*((INT64*)(a)) & 0x000000000000000F) | ((INT64)(p) & 0xFFFFFFFFFFFFFFF0))";
+PROCEDURE- SETLINK (VAR a: Address; l: Address) "*((INT64*)(a)) = ((*((INT64*)(a)) & 0x000000000000000F) | ((p) & 0x7FFFFFFFFFFFFFF0))";
+PROCEDURE- SETKIND (VAR a: Address; k: Address) "*((INT64*)(a)) = ((*((INT64*)(a)) & 0xFFFFFFFFFFFFFFFC) | ((k) & 3))";
+PROCEDURE- SETUSAGE(VAR a: Address; m: Address) "*((INT64*)(a)) = ((*((INT64*)(a)) & 0xFFFFFFFFFFFFFFF3) | (((m) & 3) << 2))";
+PROCEDURE- SETPARAM(VAR a: Address; p: Address) "*((INT64*)(a)) = ((*((INT64*)(a)) & 0x8000FFFFFFFFFFFF) | (((p) & (INT64)0x7FFF) << 52))";
 
 (* ----------------- TextWriter convenience functions ----------------------- *)
 
@@ -100,7 +126,7 @@ PROCEDURE wb(b: BOOLEAN);        BEGIN IF b THEN ws("TRUE") ELSE ws("FALSE") END
 (* ----------------- Error handling convenience functions ------------------- *)
 
 PROCEDURE Fail(msg: ARRAY OF CHAR);
-BEGIN IF Strings.Length(msg) > 0 THEN wlc; ws("Internal error:"); wsl(msg) END;
+BEGIN IF Strings.Length(msg) > 0 THEN wlc; ws("Internal failure:"); wsl(msg) END;
   wlc; HALT(99)
 END Fail;
 
@@ -140,14 +166,14 @@ END wu;
 PROCEDURE- BitwiseAnd(a,b: LONGINT): LONGINT "((a) & (b))";
 
 PROCEDURE CompressValue(kind, data: Address; VAR buf: Block): BOOLEAN;
-VAR val: ARRAY 12 OF Byte; i: INTEGER;
+VAR val: ARRAY 12 OF Int8; i: INTEGER;
 BEGIN
   Assert(kind < 2, "CompressValue expected Int or Link type.");
   IF (kind = Int) & (data >= 0) & (data < 128) THEN
     (* The compressed values is just the data itself *)
     IF buf.in + 1 <= LEN(buf.bytes) THEN
       Assert(buf.in < LEN(buf.bytes), "buf.in exceeds buffer length (position 0).");
-      buf.bytes[buf.in] := SYSTEM.VAL(Byte, data);  INC(buf.in);
+      buf.bytes[buf.in] := SYSTEM.VAL(Int8, data);  INC(buf.in);
       RETURN TRUE
     ELSE
       RETURN FALSE
@@ -156,21 +182,21 @@ BEGIN
     i := 0;
     REPEAT
       Assert(i < LEN(val), "i exceed buffer length (position 1");
-      val[i] := SYSTEM.VAL(Byte, data MOD 128);
+      val[i] := SYSTEM.VAL(Int8, data MOD 128);
       data := data DIV 128;  (* Note, sign extends *)
       INC(i)
     UNTIL (i >= 10) OR (((data = -1) OR (data = 0)) & (i > 1));
 
-    (* If there's not enugh room for the type flag add one more byte. *)
+    (* If there's not enough room for the type flag add one more byte. *)
     IF BitwiseAnd(val[i-1], 60H) # BitwiseAnd(data, 60H) THEN
       Assert(i < LEN(val), "i exceed buffer length (position 2");
-      val[i] := SYSTEM.VAL(Byte, data); INC(i)
+      val[i] := SYSTEM.VAL(Int8, data); INC(i)
     END;
 
     IF buf.in + i <= LEN(buf.bytes) THEN
       DEC(i);
       Assert(buf.in < LEN(buf.bytes), "buf.in exceeds buffer length (position 1).");
-      buf.bytes[buf.in] := val[i] MOD 64 + SYSTEM.VAL(Byte, kind*64) + 127+1;
+      buf.bytes[buf.in] := val[i] MOD 64 + SYSTEM.VAL(Int8, kind*64) + 127+1;
       INC(buf.in); DEC(i);
       WHILE i > 0 DO
         Assert(buf.in < LEN(buf.bytes), "buf.in exceeds buffer length (position 2).");
@@ -187,8 +213,9 @@ BEGIN
 END CompressValue;
 
 PROCEDURE ExpandValue(addr: Address; VAR v: Value);
-VAR byte: Byte; data: Address;
+VAR byte: Int8; data: Address;
 BEGIN
+  v.pos := addr;
   SYSTEM.GET(addr, byte);
   IF byte >= 0 THEN
     v.kind := Int; v.data := byte
@@ -210,12 +237,13 @@ BEGIN
   END;
   INC(addr);
   Assert(addr <= v.header.data, "Decoded flat value extended past end of flat block.");
-  IF addr < v.header.data THEN v.flatnext := addr ELSE v.flatnext := 0 END
+  IF addr < v.header.data THEN v.next := addr ELSE v.next := 0 END
 END ExpandValue;
 
 
-
 (* --------------------------------- Values --------------------------------- *)
+
+PROCEDURE^ DumpHeader(addr: Address);
 
 PROCEDURE DumpValue(v: Value);
 BEGIN
@@ -224,35 +252,55 @@ BEGIN
   IF v.header # NIL THEN
     ws(" ("); wx(v.header.next, 16); ws(", "); wx(v.header.data, 16); ws(")");
   END;
-  ws(", kind ");     IF    v.kind = Int  THEN ws("Int")
-                     ELSIF v.kind = Link THEN ws("Link")
-                     ELSE ws("invalid "); wi(v.kind) END;
-  ws(", data ");     wx(v.data, 16);
-  ws(", flatnext "); wx(v.flatnext, 16); wl
+  ws(", kind ");   IF    v.kind = Int  THEN ws("Int")
+                   ELSIF v.kind = Link THEN ws("Link")
+                   ELSE ws("invalid "); wi(v.kind) END;
+  ws(", data ");   wx(v.data, 16);
+  IF v.pos # 0 THEN
+    ws(", pos ");  wx(v.pos, 16);
+    ws(", next "); wx(v.next, 16)
+  END;
+  wl;
+  IF KIND(v.header.next) = Flat THEN
+    wsl("Flat block ");
+    DumpHeader(SYSTEM.ADR(v.header.next))
+  END;
 END DumpValue;
 
 PROCEDURE InitInt(VAR v: Value; i: Address);
 BEGIN
-  v.header   := NIL;
-  v.kind     := Int;
-  v.data     := i;
-  v.flatnext := 0;
+  v.kind   := Int;
+  v.data   := i;
+  v.header := NIL;
+  v.pos    := 0;
+  v.next   := 0;
 END InitInt;
 
-PROCEDURE InitLink(VAR v: Value; blockheader: Address);
+PROCEDURE CheckLink(s: ARRAY OF CHAR; link: Address);
+VAR p: AtomPtr;
 BEGIN
-  IF blockheader MOD 16 # 0 THEN
-    ws("InitLink passed unaligned block address "); wx(blockheader,16); wl;
-  END;
-  Assert(blockheader MOD 16 = 0, "InitAtomReference expects address with bits 0 to 3 = 0.");
-  Assert(blockheader # 0, "Cannot InitLink from NIL.");
-  v.header := SYSTEM.VAL(AtomPtr, blockheader);
-  v.kind   := v.header.next MOD 4;
+  p := ATOMPTR(link);
+  IF (KIND(p.next) = Flat) & (PARAM(link) < SIZE(AtomHeader)) THEN
+    wlc; ws(s); ws(", bad flatlist link = "); wx(link,16); wl;
+  END
+END CheckLink;
+
+PROCEDURE InitLink(VAR v: Value; link: Address);
+BEGIN
+  CheckLink("InitLink", link);
+  v.header := ATOMPTR(link);  Assert(v.header # NIL, "Cannot InitLink from NIL.");
+  v.kind   := KIND(v.header.next);
   IF v.kind < Flat THEN
-    v.data     := v.header.data;
-    v.flatnext := 0
+    v.data := v.header.data;
+    v.pos  := 0;
+    v.next := 0
   ELSE  (* Set up for link into flat list *)
-    ExpandValue(blockheader + SIZE(AtomHeader), v)
+    IF (PARAM(link) < SIZE(AtomHeader)) THEN
+      ws("Link into flat list: "); wx(link,16); wl
+    END;
+    Assert(PARAM(link) >= SIZE(AtomHeader), "Expected link to flat list to reach past atom header.");
+    Assert(PTR(link) + PARAM(link) < v.header.data, "Link into flat list has bad offset.");
+    ExpandValue(PTR(link) + PARAM(link), v)
   END
 END InitLink;
 
@@ -266,15 +314,21 @@ PROCEDURE Fetch*(VAR v: Value);
 BEGIN
   Assert(IsLink(v), "Fetch expects reference that is a Link, not an Int.");
   IF v.kind = Int THEN InitInt(v, v.data)
-  ELSE InitLink(v, v.data) END
+  ELSE CheckLink("Fetch", v.data); InitLink(v, v.data) END
 END Fetch;
 
 PROCEDURE Next*(VAR v: Value);
 BEGIN
+  (*
+  ws("Next. v.header at "); wx(SYSTEM.ADR(v.header),1);
+  ws(", v.header.next "); wx(v.header.next,1);
+  ws(", KIND(v.header.next) "); wi(KIND(v.header.next));
+  wl;
+  *)
   Assert(IsLink(v), "Next expects reference that is a Link, not an Int.");
-  IF v.flatnext # 0 THEN  ExpandValue(v.flatnext, v)
-  ELSIF v.header.next DIV 16 = 0 THEN InitInt(v, 0)
-  ELSE InitLink(v, v.header.next - v.header.next MOD 16)
+  IF v.next # 0 THEN  ExpandValue(v.next, v)
+  ELSIF ATOMPTR(v.header.next) = NIL THEN InitInt(v, 0)
+  ELSE CheckLink("Next", v.header.next); InitLink(v, v.header.next)
   END
 END Next;
 
@@ -282,20 +336,28 @@ PROCEDURE StoreValue(source: Value; VAR target: Value);
 VAR a: AtomPtr;
 BEGIN
   Assert(IsLink(target), "Target reference of Store must be a link.");
-  IF target.header.next MOD 4 = Flat THEN
+  IF KIND(target.header.next) = Flat THEN
     Fail("StoreValue target is in flat list but unflattening is not yet implemented.")
   END;
-  IF ~IsLink(source) THEN
-    target.header.next := target.header.next - target.header.next MOD 4 + Int;
-    target.header.data := source.data
-  ELSE
-    IF source.header.next MOD 4 > Link THEN
-      Fail("StoreValue source is link into flat list but unflattening is not yet implemented.")
+  IF IsLink(source) THEN
+    (*
+    wlc; wsl("Store link, source value: "); DumpValue(source);
+    wsl("Store link, target value: "); DumpValue(target); wl;
+    *)
+    (* target.header is the atom that we are updating. *)
+    SETKIND(target.header.next, Link);
+    target.header.data := SYSTEM.VAL(Address, source.header);
+    IF source.pos # 0 THEN
+      SETPARAM(target.header.data, source.pos - SYSTEM.VAL(Address, source.header))
     END;
-    target.header.next := target.header.next - target.header.next MOD 4 + Link;
-    target.header.data := SYSTEM.VAL(Address, source.header)
+    CheckLink("StoreValue", target.header.data);
+    InitLink(target, target.header.data)
+  ELSE
+    SETKIND(target.header.next, Int);
+    target.header.data := source.data;
+    CheckLink("StoreValue", SYSTEM.VAL(Address, target.header));
+    InitLink(target, SYSTEM.VAL(Address, target.header))
   END;
-  InitLink(target, SYSTEM.VAL(Address, target.header))
 END StoreValue;
 
 
@@ -305,7 +367,7 @@ PROCEDURE NewAtom(): AtomPtr;
 VAR result: AtomPtr;
 BEGIN
   Assert(Free # NIL, "Out of memory.");
-  result := Free;  Free := SYSTEM.VAL(AtomPtr, Free.next);
+  result := Free;  Free := ATOMPTR(Free.next);
   result.next := 0;  result.data := 0;
 RETURN result END NewAtom;
 
@@ -319,7 +381,7 @@ BEGIN
   Memory[LEN(Memory)-1].next := 0;
   Memory[LEN(Memory)-1].data := 0;
   FOR i := 0 TO LEN(IntrinsicVariable)-1 DO IntrinsicVariable[i] := 0 END;
-  Free := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory))
+  Free := ATOMPTR(SYSTEM.ADR(Memory))
 END InitMemory;
 
 
@@ -393,6 +455,7 @@ BEGIN
   IF Program.kind = Int THEN
     (*
     IF Program.data > 32 THEN ws("Intrinsic '"); wu(Program.data); wsl("'.") END;
+    IF Program.data > 32 THEN wu(Program.data); wfl END;
     *)
     CASE CHR(Program.data) OF
     |' ', 0AX, 0DX: (* No op   *)
@@ -404,6 +467,7 @@ BEGIN
                        IF IntrinsicVariable[i] = 0 THEN
                          IntrinsicVariable[i] := SYSTEM.VAL(Address, NewAtom())
                        END;
+                       CheckLink("Variable address operation", IntrinsicVariable[i]);
                        InitLink(Arg.stk[Arg.top], IntrinsicVariable[i]); INC(Arg.top)
                        (*ws("Following initrinsic variable push, "); DumpStack(Arg); wl*)
 
@@ -532,8 +596,8 @@ END Step;
 
 PROCEDURE AddBootstrapAtom(VAR current: AtomPtr; data: Address);
 BEGIN
-  current.next := SYSTEM.VAL(Address, NewAtom()) + current.next MOD 4;
-  current := SYSTEM.VAL(AtomPtr, current.next - current.next MOD 16);
+  SETPTR(current.next, NewAtom());
+  current := ATOMPTR(current.next);
   current.data := data
 END AddBootstrapAtom;
 
@@ -549,10 +613,11 @@ BEGIN
       |'^': BootState := 1;
       |'[': AddBootstrapAtom(current, 0);  BootStack[BootTop] := current;  INC(BootTop);
       |']': DEC(BootTop);  link := BootStack[BootTop];
-            link.data := link.next - link.next MOD 16;
+            link.data := LINK(link.next);
             link.next := Link;
-            Assert(current.next - current.next MOD 16 = 0, "Expected current.next to be at EOL in ']'.");
+            Assert(LINK(current.next) = 0, "Expected current.next to be at end of list in ']'.");
             current := link;
+            link := ATOMPTR(link.data);
       ELSE  AddBootstrapAtom(current, ORD(ch))
       END
   |1: IF (ch >= '0') & (ch <= '9') THEN
@@ -582,48 +647,30 @@ BEGIN BootTop := 0;
     IF c # 0DX THEN BootstrapAddChar(current, c) END;
     Files.Read(r, c)
   END;
-  current := SYSTEM.VAL(AtomPtr, head.next - head.next MOD 16);
+  current := ATOMPTR(head.next);
 RETURN current END LoadBoostrap;
 
 
 (* ------------------ Garbage collection experimentiation ----------------- *)
 
-PROCEDURE GetUsage(atom: AtomPtr): Address;
-BEGIN RETURN atom.next DIV 4 MOD 4 END GetUsage;
-
-PROCEDURE SetUsage(VAR atom: AtomHeader; usage: Address);
-BEGIN
-  atom.next := atom.next
-             - atom.next MOD 16
-             + usage * 4
-             + atom.next MOD 4;
-END SetUsage;
-
-
 PROCEDURE ClearUsage;
 VAR i: INTEGER;
-BEGIN FOR i := 0 TO AtomCount-1 DO SetUsage(Memory[i], 0) END END ClearUsage;
-
-PROCEDURE GetNext(atom: AtomPtr): AtomPtr;
-BEGIN
-  Assert(atom.next MOD 4 < 2,"GetNext unexpected atom kind >= 2.");
-  RETURN SYSTEM.VAL(AtomPtr, atom.next - atom.next MOD 16)
-END GetNext;
+BEGIN FOR i := 0 TO AtomCount-1 DO SETUSAGE(Memory[i].next, 0) END END ClearUsage;
 
 PROCEDURE AddUsage(atom: AtomPtr; usage: INTEGER);
 VAR count: Address; uncounted: BOOLEAN; link: AtomPtr;
 BEGIN
   uncounted := TRUE;
   WHILE (atom # NIL) & uncounted DO
-    count := GetUsage(atom);
+    count := USAGE(atom.next);
     uncounted := count = 0;
     INC(count, usage); usage := 1;
     IF count > 2 THEN count := 2 END;
-    SetUsage(atom^, count);
-    IF uncounted & (atom.next MOD 4 = Link) THEN
-      AddUsage(SYSTEM.VAL(AtomPtr, atom.data), 2)
+    SETUSAGE(atom.next, count);
+    IF uncounted & (KIND(atom.next) = Link) THEN
+      AddUsage(ATOMPTR(atom.data), 2)
     END;
-    atom := GetNext(atom)
+    atom := ATOMPTR(atom.next)
   END
 END AddUsage;
 
@@ -631,9 +678,9 @@ PROCEDURE SetFreeToThree;
 VAR atom: AtomPtr;
 BEGIN atom := Free;
   WHILE atom # NIL DO
-    Assert(GetUsage(atom) = 0, "Expected free block to have 0 usage count.");
-    SetUsage(atom^, 3);
-    atom := GetNext(atom)
+    Assert(USAGE(atom.next) = 0, "Expected free block to have 0 usage count.");
+    SETUSAGE(atom.next, 3);
+    atom := ATOMPTR(atom.next)
   END
 END SetFreeToThree;
 
@@ -662,22 +709,22 @@ BEGIN
   wsl("Atom usage:");
   i := 0; WHILE i < AtomCount DO
     IF i MOD rowlength = 0 THEN ws("  ") END;
-    wc(CHR(Memory[i].next DIV 4 MOD 4 + ORD('0')));
+    wc(CHR(USAGE(Memory[i].next) + ORD('0')));
     INC(i);
     IF i MOD rowlength = 0 THEN wl END
   END;
   IF i MOD rowlength # 0  THEN wl END;
 END ShowUsage;
 
-PROCEDURE GetFlatCount(block: AtomPtr): Address;
+PROCEDURE GetFlatCount(header: AtomPtr): Address;
 VAR count: Address;
 BEGIN count := 0;
-  WHILE (block # NIL) & (GetUsage(block) = 1) DO
-    INC(count);  block := GetNext(block)
+  WHILE (header # NIL) & (USAGE(header.next) = 1) DO
+    INC(count);  header := ATOMPTR(header.next)
   END;
 RETURN count END GetFlatCount;
 
-PROCEDURE whexbytes(VAR buf: ARRAY OF Byte; len: Address);
+PROCEDURE whexbytes(VAR buf: ARRAY OF Int8; len: Address);
 VAR i: Address;
 BEGIN
   FOR i := 0 TO len-1 DO
@@ -696,7 +743,8 @@ PROCEDURE FlattenTree(atom: AtomPtr);
 VAR next, flatheader, nest: AtomPtr; newblock: BlockPtr;
 BEGIN
   WHILE atom # NIL DO
-    next := GetNext(atom);
+    Assert(PARAM(atom.next) = 0, "Unexpected link to flat list.");
+    next := ATOMPTR(atom.next);
     IF GetFlatCount(next) >= MinFlatRun THEN
       (* Move flat list starting at next off into a flat atom *)
       IF Blocks # NIL THEN AlignUp(Blocks.in, SIZE(AtomHeader)) END;
@@ -704,81 +752,91 @@ BEGIN
         NEW(newblock); newblock.in := 0; newblock.next := Blocks;
         Blocks := newblock
       END;
-      flatheader := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Blocks.bytes[Blocks.in]));
+      flatheader := ATOMPTR(SYSTEM.ADR(Blocks.bytes[Blocks.in]));
       INC(Blocks.in, SIZE(AtomHeader));
       LOOP
-        IF ~CompressValue(next.next MOD 4, next.data, Blocks^) THEN EXIT END;
-        next := GetNext(next);
-        IF (next = NIL) OR (GetUsage(next) # FlatUse) THEN EXIT END
+        IF ~CompressValue(KIND(next.next), next.data, Blocks^) THEN EXIT END;
+        next := ATOMPTR(next.next);
+        IF (next = NIL) OR (USAGE(next.next) # FlatUse) THEN EXIT END
       END;
-      nest := GetNext(atom);
-      atom.next := SYSTEM.VAL(Address, flatheader) + MultiUse*4 + atom.next MOD 4;
+      nest := ATOMPTR(atom.next);
+      SETPTR(atom.next, flatheader);
+      SETPARAM(atom.next, SIZE(AtomHeader));  (* Address first compressed atom *)
+      SETUSAGE(atom.next, MultiUse);
       flatheader.next := SYSTEM.VAL(Address, next) + MultiUse*4 + Flat;
       flatheader.data := SYSTEM.ADR(Blocks.bytes) + Blocks.in;
       (* Recursively add any referenced sublists *)
       WHILE nest # next DO
-        IF nest.next MOD 4 = Link THEN
-          FlattenTree(SYSTEM.VAL(AtomPtr, nest.data))
-        END;
-        DEC(nest.next, nest.next MOD 16);  (* Mark as free *)
-        nest := GetNext(nest)
+        IF KIND(nest.next) = Link THEN FlattenTree(ATOMPTR(nest.data)) END;
+        SETUSAGE(nest.next, Unused);
+        nest := ATOMPTR(nest.next)
       END
     END;
-    IF atom.next MOD 4 = Link THEN
-      FlattenTree(SYSTEM.VAL(AtomPtr, atom.data))
-    END;
+    IF KIND(atom.next) = Link THEN FlattenTree(ATOMPTR(atom.data)) END;
     atom := next;
   END
 END FlattenTree;
 
-PROCEDURE DumpBlocks;
+PROCEDURE DumpHeader(addr: Address);
+VAR hdr: AtomPtr; val: Value;
+BEGIN
+  hdr := ATOMPTR(addr);
+  ws("Header at ");  wx(addr, 16); wl;
+  ws("  next: ");    wx(hdr.next,16);
+  ws(" (usage ");    wi(USAGE(hdr.next));
+  ws(", kind ");     wi(KIND(hdr.next)); wsl(")");
+  ws("  data: ");    wx(hdr.data,16);
+  ws(" => length "); wi(hdr.data - (addr + SIZE(AtomHeader))); wsl(" bytes.");
+  CheckLink("DumpHeader", addr);
+  InitLink(val, addr);
+  ws("  content: '");
+  LOOP
+    CASE val.kind OF
+    |Int:  wu(val.data)
+    |Link: wc("<"); wx(val.data,1); wc(">")
+    ELSE ws("<bad kind "); wi(val.kind); ws(">")
+    END;
+    IF val.next = 0 THEN EXIT END;
+    Next(val)
+  END;
+  wsl("'.");
+END DumpHeader;
+
+PROCEDURE DumpBlock(block: BlockPtr);
 CONST BytesPerLine = 32;
-VAR i: Address; addr: Address; hdr: AtomPtr; val: Value; block: BlockPtr;
+VAR i: Address; addr: Address; hdr: AtomPtr;
+BEGIN
+  ws("Block at "); wx(SYSTEM.VAL(Address, block),16); wl;
+  ws("  in:   "); wi(block.in); wl;
+  ws("  next: "); wx(SYSTEM.VAL(Address, block.next),16); wl;
+
+  (* Hex dump *)
+  i := 0;
+  WHILE i < block.in DO
+    IF i MOD BytesPerLine = 0 THEN ws("  "); wx(i,4); ws(": ") END;
+    wx(block.bytes[i],2); wc(" ");
+    IF i MOD BytesPerLine = BytesPerLine - 1 THEN wl END;
+    INC(i)
+  END;
+  IF i MOD BytesPerLine # 0 THEN wl END;
+
+  (* Interpreted dump *)
+  i := 0; WHILE i < block.in DO
+    addr := SYSTEM.ADR(block.bytes[i]);
+    SETPARAM(addr, SIZE(AtomHeader));
+    wlc; DumpHeader(addr);
+    hdr  := ATOMPTR(addr);
+    i := hdr.data - SYSTEM.ADR(block.bytes);
+    AlignUp(i, SIZE(AtomHeader));
+  END;
+END DumpBlock;
+
+
+PROCEDURE DumpBlocks;
+VAR block: BlockPtr;
 BEGIN
   block := Blocks;
-  WHILE block # NIL DO
-    ws("Block at "); wx(SYSTEM.VAL(Address, block),16); wl;
-    ws("  in:   "); wi(block.in); wl;
-    ws("  next: "); wx(SYSTEM.VAL(Address, block.next),16); wl;
-
-    (* Hex dump *)
-    i := 0;
-    WHILE i < block.in DO
-      IF i MOD BytesPerLine = 0 THEN ws("  "); wx(i,4); ws(": ") END;
-      wx(block.bytes[i],2); wc(" ");
-      IF i MOD BytesPerLine = BytesPerLine - 1 THEN wl END;
-      INC(i)
-    END;
-    IF i MOD BytesPerLine # 0 THEN wl END;
-
-    (* Interpreted dump *)
-    i := 0; WHILE i < block.in DO
-      addr := SYSTEM.ADR(block.bytes[i]);
-      hdr := SYSTEM.VAL(AtomPtr, addr);
-      wlc;
-      ws("Header at "); wx(addr, 16); wl;
-      ws("  next: "); wx(hdr.next,16);
-      ws(" (mark "); wi(hdr.next DIV 4 MOD 4);
-      ws(", kind "); wi(hdr.next MOD 4); wsl(")");
-      ws("  data: "); wx(hdr.data,16);
-      ws(" => length "); wi(hdr.data - (addr + SIZE(AtomHeader))); wsl(" bytes.");
-      InitLink(val, addr);
-      ws("  content: '");
-      LOOP
-        CASE val.kind OF
-        |Int:  wu(val.data)
-        |Link: wc("<"); wx(val.data,1); wc(">")
-        ELSE ws("<bad kind "); wi(val.kind); ws(">")
-        END;
-        IF val.flatnext = 0 THEN EXIT END;
-        Next(val)
-      END;
-      wsl("'.");
-      i := hdr.data - SYSTEM.ADR(block.bytes);
-      AlignUp(i, SIZE(AtomHeader));
-    END;
-    block := block.next
-  END
+  WHILE block # NIL DO DumpBlock(block); block := block.next END
 END DumpBlocks;
 
 PROCEDURE TestMakeFlatValue(t, a: Address; verbose: BOOLEAN);
@@ -790,16 +848,16 @@ BEGIN
   IF CompressValue(t, a, buf) THEN END;
   IF verbose THEN ws(" flattened: "); whexbytes(buf.bytes, buf.in) END;
 
-  v.header := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(dummy));
+  v.header := ATOMPTR(SYSTEM.ADR(dummy));
   dummy.data := SYSTEM.ADR(buf.bytes) + buf.in;
   ExpandValue(SYSTEM.ADR(buf.bytes), v);
 
   IF verbose THEN
     ws(", decoded: type "); wx(v.kind,1); ws(" data "); wx(v.data,16); wl
   END;
-  Assert(t=v.kind, "Flat value type lost.");
-  Assert(a=v.data, "Flat value data lost.");
-  Assert(v.flatnext = 0, "More bytes encoed than decoded.");
+  Assert(t=v.kind,   "Flat value type lost.");
+  Assert(a=v.data,   "Flat value data lost.");
+  Assert(v.next = 0, "More bytes encoded than decoded.");
 END TestMakeFlatValue;
 
 PROCEDURE TestFlattening;
@@ -856,48 +914,67 @@ BEGIN
   ws("Address size is "); wi(SIZE(Address)*8); wsl(" bits.");
   InitMemory;
 
-  InitLink(Boot, SYSTEM.VAL(Address, LoadBoostrap()));  (*DumpList(Boot);*)
+  InitLink(Boot, SYSTEM.VAL(Address, LoadBoostrap()));
+
+  (*
+  wsl("-----------------------");
+  wsl("Boot before running it:");
+  wsl("-----------------------");
+  wvalue(Boot);
+  *)
 
   (* Run the bootstrap *)
   Program := Boot;  WHILE IsLink(Program) DO Step END;
 
+  (*
   wl; ws("Bootstrap complete, "); DumpStack(Arg);
 
   wsl("--------------------------");
   wsl("Boot before usage marking:");
   wsl("--------------------------");
   wvalue(Boot);
+  *)
 
   MarkHeap;
 
+  (*
   wsl("-------------------------------------------");
   wsl("Boot after usage marking, before ShowUsage:");
   wsl("-------------------------------------------");
   wvalue(Boot);
+  *)
 
-  ShowUsage;
+
+  ws("Usage before flatten "); ShowUsage;
 
   (* TestFlattening; *)
 
+  (*
   wsl("----------------------------------------");
   wsl("Boot after ShowUsage, before flattening:");
   wsl("----------------------------------------");
   wvalue(Boot);
+  *)
 
   FlattenTree(Boot.header);
+  wsl("FlattenTree complete.");
 
-  (* DumpBlocks; *)
+  DumpBlocks;
 
-  ShowUsage;
+  ws("Usage after flatten "); ShowUsage;
 
+  (*
   wsl("-------------------------------------");
   wsl("Boot after FlattenTree and ShowUsage:");
   wsl("-------------------------------------");
-  (* DumpOn := TRUE; *)
+  DumpOn := TRUE;
   wvalue(Boot);
-  Program := Boot;  WHILE IsLink(Program) DO Step END;
+  *)
 
   (* See if Boot runs OK now that it has been flattened. *)
+  wsl("Run program after flattening.");
+  Program := Boot;  WHILE IsLink(Program) DO Step END;
+
 
 END dam.
 

@@ -12,7 +12,7 @@ L
 
 [Some assertions:]WL
 
-0 [Expected non-zero] a.!
+0 [Expected non-zero] a . !
 
 35=[3 not equal to 5]a.!
 
@@ -56,21 +56,21 @@ L
 ]#
 [
   p.[Unexpectedly NIL pattern]a.!
-  [p.._ [                                              [[Pattern is link.]WL]!
+  [p.._ [                                              [[Pattern is link.]WL]#
       s. i. p. ".o.!
-    ]?                                                [[Pattern is value.]WL]!
-      p..                                             [[Pattern char = ]W "W]!
-      i..                                             [[, Input char = ]W "W]!
+    ]?                                                [[Pattern is value.]WL]#
+      p..                                             [[Pattern char = ]W "W]#
+      i..                                             [[, Input char = ]W "W]#
       = e:
-                                                       [[, match: ]W e.`0+WL]!
-                                                           [[After match ]WS]!
+                                                       [[, match: ]W e.`0+WL]#
+                                                           [[After match ]WS]#
       [e. [i.,i:]? ]!
-                                                    [[After input advance]WS]!
-                             [[Input is now ]W i.  [" [.]? #[nil]]! W [, ]WS]!
-      [ s. e. =                                             [[s=e: ]W "`0+WL]!
-        p.,                                               [[p.,: ]W "~~`0+WL]!
-        &                                                   [[&: ]W   "`0+WL]!
-        [p.,p:  [[Advance p.]WL]!  ]? b.!
+                                                    [[After input advance]WS]#
+                             [[Input is now ]W i.  [" [.]? #[nil]]! W [, ]WS]#
+      [ s. e. =                                             [[s=e: ]W "`0+WL]#
+        p.,                                               [[p.,: ]W "~~`0+WL]#
+        &                                                   [[&: ]W   "`0+WL]#
+        [p.,p:]? b.!
       ]!
   ]!
 ] m:
