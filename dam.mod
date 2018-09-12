@@ -8,7 +8,7 @@ CONST
   MaxBuffer  = 1024;
   MaxLines   = 8000;
   BlockSize  = 512; (* Max 2048 limited by Param field in next *)
-  MinFlatRun = 3;
+  MinFlatRun = 4;
 
   (* Usage markings *)
   Unused   = 0;
@@ -89,11 +89,8 @@ VAR
 
   Blocks: BlockPtr;
 
-  (* Dump wvalue execution. *)
-  DumpOn: BOOLEAN;
 
-
-(* ------------- C functions to extract parts of the next field. ------------ *)
+(* ------------- C functions to access parts of the next field. ------------- *)
 
 PROCEDURE- ATOMPTR(a: Address): AtomPtr "(dam_AtomPtr)((a) & 0x000FFFFFFFFFFFF0)";
 PROCEDURE- PTR    (a: Address): Address "((a) & 0x000FFFFFFFFFFFF0)";
@@ -166,22 +163,20 @@ END wu;
 PROCEDURE- BitwiseAnd(a,b: LONGINT): LONGINT "((a) & (b))";
 
 PROCEDURE CompressValue(kind, data: Address; VAR buf: Block): BOOLEAN;
-VAR val: ARRAY 12 OF Int8; i: INTEGER;
-BEGIN
-  Assert(kind < 2, "CompressValue expected Int or Link type.");
+VAR val: ARRAY 12 OF Int8; i: INTEGER; success: BOOLEAN;
+BEGIN success := FALSE;
+  (*Assert(kind < 2, "CompressValue expected Int or Link type.");*)
   IF (kind = Int) & (data >= 0) & (data < 128) THEN
     (* The compressed values is just the data itself *)
     IF buf.in + 1 <= LEN(buf.bytes) THEN
-      Assert(buf.in < LEN(buf.bytes), "buf.in exceeds buffer length (position 0).");
+      (*Assert(buf.in < LEN(buf.bytes), "buf.in exceeds buffer length (position 0).");*)
       buf.bytes[buf.in] := SYSTEM.VAL(Int8, data);  INC(buf.in);
-      RETURN TRUE
-    ELSE
-      RETURN FALSE
+      success := TRUE
     END
   ELSE
     i := 0;
     REPEAT
-      Assert(i < LEN(val), "i exceed buffer length (position 1");
+      (*Assert(i < LEN(val), "i exceed buffer length (position 1");*)
       val[i] := SYSTEM.VAL(Int8, data MOD 128);
       data := data DIV 128;  (* Note, sign extends *)
       INC(i)
@@ -189,28 +184,26 @@ BEGIN
 
     (* If there's not enough room for the type flag add one more byte. *)
     IF BitwiseAnd(val[i-1], 60H) # BitwiseAnd(data, 60H) THEN
-      Assert(i < LEN(val), "i exceed buffer length (position 2");
+      (*Assert(i < LEN(val), "i exceed buffer length (position 2");*)
       val[i] := SYSTEM.VAL(Int8, data); INC(i)
     END;
 
     IF buf.in + i <= LEN(buf.bytes) THEN
       DEC(i);
-      Assert(buf.in < LEN(buf.bytes), "buf.in exceeds buffer length (position 1).");
+      (*Assert(buf.in < LEN(buf.bytes), "buf.in exceeds buffer length (position 1).");*)
       buf.bytes[buf.in] := val[i] MOD 64 + SYSTEM.VAL(Int8, kind*64) + 127+1;
       INC(buf.in); DEC(i);
       WHILE i > 0 DO
-        Assert(buf.in < LEN(buf.bytes), "buf.in exceeds buffer length (position 2).");
+        (*Assert(buf.in < LEN(buf.bytes), "buf.in exceeds buffer length (position 2).");*)
         buf.bytes[buf.in] := val[i]+127+1;
         INC(buf.in); DEC(i)
       END;
-      Assert(buf.in < LEN(buf.bytes), "buf.in exceeds buffer length (position 3).");
+      (*Assert(buf.in < LEN(buf.bytes), "buf.in exceeds buffer length (position 3).");*)
       buf.bytes[buf.in] := val[0]; INC(buf.in);
-      RETURN TRUE
-    ELSE
-      RETURN FALSE
+      success := TRUE
     END
   END;
-END CompressValue;
+RETURN success END CompressValue;
 
 PROCEDURE ExpandValue(addr: Address; VAR v: Value);
 VAR byte: Int8; data: Address;
@@ -281,7 +274,7 @@ VAR p: AtomPtr;
 BEGIN
   p := ATOMPTR(link);
   IF (KIND(p.next) = Flat) & (PARAM(link) < SIZE(AtomHeader)) THEN
-    wlc; ws(s); ws(", bad flatlist link = "); wx(link,16); wl;
+    wlc; ws(s); ws(", Invalid param in flatlist link = "); wx(link,16); wl;
   END
 END CheckLink;
 
@@ -319,12 +312,6 @@ END Fetch;
 
 PROCEDURE Next*(VAR v: Value);
 BEGIN
-  (*
-  ws("Next. v.header at "); wx(SYSTEM.ADR(v.header),1);
-  ws(", v.header.next "); wx(v.header.next,1);
-  ws(", KIND(v.header.next) "); wi(KIND(v.header.next));
-  wl;
-  *)
   Assert(IsLink(v), "Next expects reference that is a Link, not an Int.");
   IF v.next # 0 THEN  ExpandValue(v.next, v)
   ELSIF ATOMPTR(v.header.next) = NIL THEN InitInt(v, 0)
@@ -340,10 +327,6 @@ BEGIN
     Fail("StoreValue target is in flat list but unflattening is not yet implemented.")
   END;
   IF IsLink(source) THEN
-    (*
-    wlc; wsl("Store link, source value: "); DumpValue(source);
-    wsl("Store link, target value: "); DumpValue(target); wl;
-    *)
     (* target.header is the atom that we are updating. *)
     SETKIND(target.header.next, Link);
     target.header.data := SYSTEM.VAL(Address, source.header);
@@ -394,7 +377,6 @@ BEGIN
     wu(v.data)
   ELSE
     WHILE IsLink(v) DO
-      IF DumpOn THEN wlc; ws("wvalue: "); DumpValue(v) END;
       IF v.kind = Int THEN wu(v.data)
       ELSE wc('['); l := v; Fetch(l); wvalue(l); wc(']') END;
       Next(v)
@@ -651,11 +633,33 @@ BEGIN BootTop := 0;
 RETURN current END LoadBoostrap;
 
 
-(* ------------------ Garbage collection experimentiation ----------------- *)
+(* ------------------------ Regroup experimentation ------------------------- *)
+
+PROCEDURE AlignUp(VAR addr: Address; unit: Address);
+BEGIN
+  addr := addr + unit-1;
+  addr := addr - addr MOD unit;
+END AlignUp;
 
 PROCEDURE ClearUsage;
-VAR i: INTEGER;
-BEGIN FOR i := 0 TO AtomCount-1 DO SETUSAGE(Memory[i].next, 0) END END ClearUsage;
+VAR i: Address; block: BlockPtr; header: AtomPtr;
+BEGIN
+  (* Set all non-flat nodes sage to 0 *)
+  FOR i := 0 TO AtomCount-1 DO SETUSAGE(Memory[i].next, 0) END;
+  (* Set all flat header usages to 2 *)
+  block := Blocks;
+  WHILE block # NIL DO
+    i := 0;
+    WHILE i < block.in DO
+      header := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(block.bytes[i]));
+      Assert(KIND(header.next) = Flat, "Expected header kind in block to be flat.");
+      SETUSAGE(header.next, 0);
+      i := header.data - SYSTEM.ADR(block.bytes);
+      AlignUp(i, SIZE(AtomHeader));
+    END;
+    block := block.next
+  END
+END ClearUsage;
 
 PROCEDURE AddUsage(atom: AtomPtr; usage: INTEGER);
 VAR count: Address; uncounted: BOOLEAN; link: AtomPtr;
@@ -674,79 +678,24 @@ BEGIN
   END
 END AddUsage;
 
-PROCEDURE SetFreeToThree;
-VAR atom: AtomPtr;
-BEGIN atom := Free;
-  WHILE atom # NIL DO
-    Assert(USAGE(atom.next) = 0, "Expected free block to have 0 usage count.");
-    SETUSAGE(atom.next, 3);
-    atom := ATOMPTR(atom.next)
-  END
-END SetFreeToThree;
-
-PROCEDURE MarkTree(v: Value);
-BEGIN
-  Assert(IsLink(v), "MarkTree expected value to be a link.");
-  AddUsage(v.header, 2)
-END MarkTree;
-
-PROCEDURE MarkHeap;
-VAR i: INTEGER;
-BEGIN
-  (*
-  FOR i := 0 TO Return.top - 1 DO MarkTree(Return.stk[i]) END;
-  FOR i := 0 TO Arg.top - 1 DO MarkTree(Arg.stk[i]) END;
-  FOR i := 0 TO Loop.top - 1 DO MarkTree(Loop.stk[i]) END;
-  *)
-  MarkTree(Boot);
-  SetFreeToThree
-END MarkHeap;
-
-PROCEDURE ShowUsage;
-CONST rowlength = 100;
-VAR i: INTEGER;
-BEGIN
-  wsl("Atom usage:");
-  i := 0; WHILE i < AtomCount DO
-    IF i MOD rowlength = 0 THEN ws("  ") END;
-    wc(CHR(USAGE(Memory[i].next) + ORD('0')));
-    INC(i);
-    IF i MOD rowlength = 0 THEN wl END
-  END;
-  IF i MOD rowlength # 0  THEN wl END;
-END ShowUsage;
-
 PROCEDURE GetFlatCount(header: AtomPtr): Address;
 VAR count: Address;
 BEGIN count := 0;
-  WHILE (header # NIL) & (USAGE(header.next) = 1) DO
+  WHILE (header # NIL)
+      & (USAGE(header.next) = 1)
+      & (KIND(header.next) = Int) DO
     INC(count);  header := ATOMPTR(header.next)
   END;
 RETURN count END GetFlatCount;
-
-PROCEDURE whexbytes(VAR buf: ARRAY OF Int8; len: Address);
-VAR i: Address;
-BEGIN
-  FOR i := 0 TO len-1 DO
-    wx(buf[i],2);
-    IF i < len-1 THEN wc(" ") END
-  END
-END whexbytes;
-
-PROCEDURE AlignUp(VAR addr: Address; unit: Address);
-BEGIN
-  addr := addr + unit-1;
-  addr := addr - addr MOD unit;
-END AlignUp;
 
 PROCEDURE FlattenTree(atom: AtomPtr);
 VAR next, flatheader, nest: AtomPtr; newblock: BlockPtr;
 BEGIN
   WHILE atom # NIL DO
-    Assert(PARAM(atom.next) = 0, "Unexpected link to flat list.");
+    (* Assert(PARAM(atom.next) = 0, "Unexpected link to flat list."); *)
     next := ATOMPTR(atom.next);
     IF GetFlatCount(next) >= MinFlatRun THEN
-      (* Move flat list starting at next off into a flat atom *)
+      (* Move flat list (starting at next) off into a flat atom *)
       IF Blocks # NIL THEN AlignUp(Blocks.in, SIZE(AtomHeader)) END;
       IF (Blocks = NIL) OR (Blocks.in + 32 > LEN(Blocks.bytes)) THEN
         NEW(newblock); newblock.in := 0; newblock.next := Blocks;
@@ -757,7 +706,9 @@ BEGIN
       LOOP
         IF ~CompressValue(KIND(next.next), next.data, Blocks^) THEN EXIT END;
         next := ATOMPTR(next.next);
-        IF (next = NIL) OR (USAGE(next.next) # FlatUse) THEN EXIT END
+        IF (next = NIL)
+        OR (USAGE(next.next) # FlatUse)
+        OR (KIND(next.next) # Int) THEN EXIT END
       END;
       nest := ATOMPTR(atom.next);
       SETPTR(atom.next, flatheader);
@@ -776,6 +727,57 @@ BEGIN
     atom := next;
   END
 END FlattenTree;
+
+PROCEDURE ReclaimUnusedAtoms;
+VAR i: Address;
+BEGIN
+  Free := NIL;
+  FOR i := 0 TO AtomCount-1 DO
+    IF USAGE(Memory[i].next) = 0 THEN
+      Memory[i].next := SYSTEM.VAL(Address, Free);
+      Memory[i].data := 0;
+      SETUSAGE(Memory[i].next, 3);
+      Free := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory[i]));
+    END
+  END
+END ReclaimUnusedAtoms;
+
+PROCEDURE Regroup;  (* Tidy simple lists out of the workspace *)
+VAR i: INTEGER;
+BEGIN
+  ClearUsage;
+  AddUsage(Boot.header, 2);
+  (* Should also add any stacked links *)
+  FOR i := 0 TO 25 DO IntrinsicVariable[i] := 0 END;  (* Or could add them *)
+  FlattenTree(Boot.header);
+  ReclaimUnusedAtoms
+END Regroup;
+
+
+(* --------------------------- Regroup debugging ---------------------------- *)
+
+PROCEDURE whexbytes(VAR buf: ARRAY OF Int8; len: Address);
+VAR i: Address;
+BEGIN
+  FOR i := 0 TO len-1 DO
+    wx(buf[i],2);
+    IF i < len-1 THEN wc(" ") END
+  END
+END whexbytes;
+
+PROCEDURE ShowUsage;
+CONST rowlength = 100;
+VAR i: INTEGER;
+BEGIN
+  wsl("Atom usage:");
+  i := 0; WHILE i < AtomCount DO
+    IF i MOD rowlength = 0 THEN ws("  ") END;
+    wc(CHR(USAGE(Memory[i].next) + ORD('0')));
+    INC(i);
+    IF i MOD rowlength = 0 THEN wl END
+  END;
+  IF i MOD rowlength # 0  THEN wl END;
+END ShowUsage;
 
 PROCEDURE DumpHeader(addr: Address);
 VAR hdr: AtomPtr; val: Value;
@@ -904,75 +906,40 @@ BEGIN
   TestMakeFlatValue(0, 0FFFFFFFFFFFFFFFFH, TRUE);
 END TestFlattening;
 
+PROCEDURE OutdatedTests;
+BEGIN
+  TestFlattening
+END OutdatedTests;
 
 (* ----------------------------- Startup code ----------------------------- *)
 
 BEGIN
-  DumpOn := FALSE;
   LineCount := 0;
   Assert(SYSTEM.VAL(Address, NIL) = 0, "Expected NIL to be zero.");
   ws("Address size is "); wi(SIZE(Address)*8); wsl(" bits.");
   InitMemory;
 
+  (* Load the bootstrap *)
   InitLink(Boot, SYSTEM.VAL(Address, LoadBoostrap()));
 
-  (*
-  wsl("-----------------------");
-  wsl("Boot before running it:");
-  wsl("-----------------------");
-  wvalue(Boot);
-  *)
-
   (* Run the bootstrap *)
+  wsl("Running bootstrap before regroup.");
+  Program := Boot;  WHILE IsLink(Program) DO Step END;
+  wlc; ws("Bootstrap complete, "); DumpStack(Arg);
+
+  Regroup;  ws("Usage after regroup, "); ShowUsage;
+
+  wsl("Run bootstrap after regroup.");
   Program := Boot;  WHILE IsLink(Program) DO Step END;
 
-  (*
-  wl; ws("Bootstrap complete, "); DumpStack(Arg);
+  (* Check that bootstrap runs OK after two regroups. *)
+  Regroup;  ws("Usage after second regroup, "); ShowUsage;
 
-  wsl("--------------------------");
-  wsl("Boot before usage marking:");
-  wsl("--------------------------");
+  (* Check that bootstrap is still intact *)
+  wsl("Content of Boot after second regroup:");
   wvalue(Boot);
-  *)
 
-  MarkHeap;
-
-  (*
-  wsl("-------------------------------------------");
-  wsl("Boot after usage marking, before ShowUsage:");
-  wsl("-------------------------------------------");
-  wvalue(Boot);
-  *)
-
-
-  ws("Usage before flatten "); ShowUsage;
-
-  (* TestFlattening; *)
-
-  (*
-  wsl("----------------------------------------");
-  wsl("Boot after ShowUsage, before flattening:");
-  wsl("----------------------------------------");
-  wvalue(Boot);
-  *)
-
-  FlattenTree(Boot.header);
-  wsl("FlattenTree complete.");
-
-  DumpBlocks;
-
-  ws("Usage after flatten "); ShowUsage;
-
-  (*
-  wsl("-------------------------------------");
-  wsl("Boot after FlattenTree and ShowUsage:");
-  wsl("-------------------------------------");
-  DumpOn := TRUE;
-  wvalue(Boot);
-  *)
-
-  (* See if Boot runs OK now that it has been flattened. *)
-  wsl("Run program after flattening.");
+  wsl("Run bootstrap after second regroup.");
   Program := Boot;  WHILE IsLink(Program) DO Step END;
 
 

@@ -12,20 +12,19 @@ L
 
 [Some assertions:]WL
 
-0 [Expected non-zero] a . !
+0 [Expected non-zero] a.!
 
-35=[3 not equal to 5]a.!
+3 5 = [3 not equal to 5] a.!
 
 [Counted loop test]#
-[5[[Iteration ]W "`0+W L 1- "0=~ @? ]!#]!
+5 [ [Iteration ]W "`0+W L 1- "0=~ @? #]!
 
 [Following counted loop test, ]WS
 
 [
   [Input echo loop test. Type a line of text: ]W
   [R"W A=~ @?]!
-]!
-
+]#
 
 
 [Variables:
