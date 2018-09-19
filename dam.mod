@@ -1,6 +1,6 @@
 MODULE dam;  (* dam - data, algorithms and memory *)
 
-IMPORT Strings, Files, TextWriter, SYSTEM, In;
+IMPORT Files, TextWriter, SYSTEM, In;
 
 CONST
   AtomCount  = 6000;
@@ -22,7 +22,7 @@ CONST
 
 TYPE
 
-  Address = SYSTEM.ADDRESS;
+  Address = SYSTEM.ADDRESS;  (* Integer of same size as address. *)
   Int8    = SYSTEM.INT8;
 
   AtomHeader = RECORD
@@ -68,17 +68,21 @@ TYPE
     in: Address;
   END;
 
+  AtomList = POINTER TO AtomListDesc;  (* For ListAll debugging dump. *)
+  AtomListDesc = RECORD
+    atom: Address;
+    next: AtomList;
+  END;
+
 VAR
   LineCount: INTEGER;
   Memory:    ARRAY AtomCount OF AtomHeader;
   Free:      AtomPtr;
 
   Program: Value;
-  Boot:    Value;
 
   Arg:    ValueStack;
   Return: ValueStack;
-  Loop:   ValueStack;
 
   IntrinsicVariable: ARRAY 26 OF Address;
 
@@ -89,21 +93,24 @@ VAR
 
   Blocks: BlockPtr;
 
+  Lists: AtomList;  (* For ListAll debugging dump *)
+
 
 (* ------------- C functions to access parts of the next field. ------------- *)
 
 PROCEDURE- ATOMPTR(a: Address): AtomPtr "(dam_AtomPtr)((a) & 0x000FFFFFFFFFFFF0)";
 PROCEDURE- PTR    (a: Address): Address "((a) & 0x000FFFFFFFFFFFF0)";
 PROCEDURE- LINK   (a: Address): Address "((a) & 0x7FFFFFFFFFFFFFF0)";
-PROCEDURE- KIND   (a: Address): Address "((a) & 3)";
-PROCEDURE- USAGE  (a: Address): Address "(((a)>>2) & 3)";
+PROCEDURE- KIND   (a: AtomPtr): Address "(((a)->next) & 3)";
+PROCEDURE- USAGE  (a: AtomPtr): Address "((((a)->next)>>2) & 3)";
 PROCEDURE- PARAM  (a: Address): Address "(((a)>>52) & 0x7FF)";
 
 PROCEDURE- SETPTR  (VAR a: Address; p: AtomPtr) "*((INT64*)(a)) = ((*((INT64*)(a)) & 0x000000000000000F) | ((INT64)(p) & 0xFFFFFFFFFFFFFFF0))";
-PROCEDURE- SETLINK (VAR a: Address; l: Address) "*((INT64*)(a)) = ((*((INT64*)(a)) & 0x000000000000000F) | ((p) & 0x7FFFFFFFFFFFFFF0))";
-PROCEDURE- SETKIND (VAR a: Address; k: Address) "*((INT64*)(a)) = ((*((INT64*)(a)) & 0xFFFFFFFFFFFFFFFC) | ((k) & 3))";
-PROCEDURE- SETUSAGE(VAR a: Address; m: Address) "*((INT64*)(a)) = ((*((INT64*)(a)) & 0xFFFFFFFFFFFFFFF3) | (((m) & 3) << 2))";
+PROCEDURE- SETLINK (VAR a: Address; l: Address) "*((INT64*)(a)) = ((*((INT64*)(a)) & 0x000000000000000F) | ((l) & 0xFFFFFFFFFFFFFFF0))";
+PROCEDURE- SETKIND (    a: AtomPtr; k: Address) "(a)->next = (((a)->next & 0xFFFFFFFFFFFFFFFC) | ((k) & 3))";
+PROCEDURE- SETUSAGE(    a: AtomPtr; m: Address) "(a)->next = (((a)->next & 0xFFFFFFFFFFFFFFF3) | (((m) & 3) << 2))";
 PROCEDURE- SETPARAM(VAR a: Address; p: Address) "*((INT64*)(a)) = ((*((INT64*)(a)) & 0x8000FFFFFFFFFFFF) | (((p) & (INT64)0x7FFF) << 52))";
+
 
 (* ----------------- TextWriter convenience functions ----------------------- *)
 
@@ -123,7 +130,7 @@ PROCEDURE wb(b: BOOLEAN);        BEGIN IF b THEN ws("TRUE") ELSE ws("FALSE") END
 (* ----------------- Error handling convenience functions ------------------- *)
 
 PROCEDURE Fail(msg: ARRAY OF CHAR);
-BEGIN IF Strings.Length(msg) > 0 THEN wlc; ws("Internal failure:"); wsl(msg) END;
+BEGIN IF msg[0] # 0X THEN wlc; ws("Internal failure:"); wsl(msg) END;
   wlc; HALT(99)
 END Fail;
 
@@ -159,6 +166,12 @@ BEGIN
 END wu;
 
 (* ---------------------------- FLattened values ---------------------------- *)
+
+PROCEDURE AlignUp(VAR addr: Address; unit: Address);
+BEGIN
+  addr := addr + unit-1;
+  addr := addr - addr MOD unit;
+END AlignUp;
 
 PROCEDURE- BitwiseAnd(a,b: LONGINT): LONGINT "((a) & (b))";
 
@@ -238,25 +251,37 @@ END ExpandValue;
 
 PROCEDURE^ DumpHeader(addr: Address);
 
+PROCEDURE wkind(k: Address);
+BEGIN CASE k OF
+  |Int:  ws("Int")
+  |Link: ws("Link")
+  |Flat: ws("Flat")
+  ELSE   ws("invalid<"); wi(k); wc('>')
+  END
+END wkind;
+
 PROCEDURE DumpValue(v: Value);
+VAR link: Address;
 BEGIN
   ws("DumpValue");
-  ws(". Header ");   wx(SYSTEM.VAL(Address, v.header), 16);
+  ws(". Header at ");   wx(SYSTEM.VAL(Address, v.header), 16);
   IF v.header # NIL THEN
     ws(" ("); wx(v.header.next, 16); ws(", "); wx(v.header.data, 16); ws(")");
+    wl;
+    ws("  header usage "); wi(USAGE(v.header));
+    ws(", header kind ");  wkind(KIND(v.header));
   END;
-  ws(", kind ");   IF    v.kind = Int  THEN ws("Int")
-                   ELSIF v.kind = Link THEN ws("Link")
-                   ELSE ws("invalid "); wi(v.kind) END;
-  ws(", data ");   wx(v.data, 16);
+  ws(", current kind "); wkind(v.kind);
+  ws(", current data "); wx(v.data, 1);
   IF v.pos # 0 THEN
     ws(", pos ");  wx(v.pos, 16);
     ws(", next "); wx(v.next, 16)
   END;
   wl;
-  IF KIND(v.header.next) = Flat THEN
+  IF KIND(v.header) = Flat THEN
     wsl("Flat block ");
-    DumpHeader(SYSTEM.ADR(v.header.next))
+    link := SYSTEM.ADR(v.header.next);  SETPARAM(link, SIZE(AtomHeader));
+    DumpHeader(link)
   END;
 END DumpValue;
 
@@ -273,7 +298,7 @@ PROCEDURE CheckLink(s: ARRAY OF CHAR; link: Address);
 VAR p: AtomPtr;
 BEGIN
   p := ATOMPTR(link);
-  IF (KIND(p.next) = Flat) & (PARAM(link) < SIZE(AtomHeader)) THEN
+  IF (KIND(p) = Flat) & (PARAM(link) < SIZE(AtomHeader)) THEN
     wlc; ws(s); ws(", Invalid param in flatlist link = "); wx(link,16); wl;
   END
 END CheckLink;
@@ -282,7 +307,7 @@ PROCEDURE InitLink(VAR v: Value; link: Address);
 BEGIN
   CheckLink("InitLink", link);
   v.header := ATOMPTR(link);  Assert(v.header # NIL, "Cannot InitLink from NIL.");
-  v.kind   := KIND(v.header.next);
+  v.kind   := KIND(v.header);
   IF v.kind < Flat THEN
     v.data := v.header.data;
     v.pos  := 0;
@@ -307,7 +332,13 @@ PROCEDURE Fetch*(VAR v: Value);
 BEGIN
   Assert(IsLink(v), "Fetch expects reference that is a Link, not an Int.");
   IF v.kind = Int THEN InitInt(v, v.data)
-  ELSE CheckLink("Fetch", v.data); InitLink(v, v.data) END
+  ELSE
+    CheckLink("Fetch", v.data);
+    IF (v.pos # 0) & (PARAM(v.data) = 0) THEN
+      Fail("Fetch link from storage block to workspace.")
+    END;
+    InitLink(v, v.data)
+  END
 END Fetch;
 
 PROCEDURE Next*(VAR v: Value);
@@ -315,20 +346,23 @@ BEGIN
   Assert(IsLink(v), "Next expects reference that is a Link, not an Int.");
   IF v.next # 0 THEN  ExpandValue(v.next, v)
   ELSIF ATOMPTR(v.header.next) = NIL THEN InitInt(v, 0)
-  ELSE CheckLink("Next", v.header.next); InitLink(v, v.header.next)
-  END
+  ELSE
+    CheckLink("Next", v.header.next);
+    Assert((v.pos = 0) OR (PARAM(v.header.next) = 0), "Invalid next link from storage to workspace in next.");
+    InitLink(v, v.header.next)
+  END;
 END Next;
 
 PROCEDURE StoreValue(source: Value; VAR target: Value);
 VAR a: AtomPtr;
 BEGIN
   Assert(IsLink(target), "Target reference of Store must be a link.");
-  IF KIND(target.header.next) = Flat THEN
+  IF KIND(target.header) = Flat THEN
     Fail("StoreValue target is in flat list but unflattening is not yet implemented.")
   END;
   IF IsLink(source) THEN
     (* target.header is the atom that we are updating. *)
-    SETKIND(target.header.next, Link);
+    SETKIND(target.header, Link);
     target.header.data := SYSTEM.VAL(Address, source.header);
     IF source.pos # 0 THEN
       SETPARAM(target.header.data, source.pos - SYSTEM.VAL(Address, source.header))
@@ -336,7 +370,7 @@ BEGIN
     CheckLink("StoreValue", target.header.data);
     InitLink(target, target.header.data)
   ELSE
-    SETKIND(target.header.next, Int);
+    SETKIND(target.header, Int);
     target.header.data := source.data;
     CheckLink("StoreValue", SYSTEM.VAL(Address, target.header));
     InitLink(target, SYSTEM.VAL(Address, target.header))
@@ -385,6 +419,14 @@ BEGIN
 END wvalue;
 
 
+PROCEDURE wlink(link: Address);
+VAR v: Value;
+BEGIN
+  ws("Link: "); wx(link,1); wsl(", value: ");
+  InitLink(v, link); wvalue(v)
+END wlink;
+
+
 (* -------------------------------- Stacks -------------------------------- *)
 
 PROCEDURE Dup(VAR stk: ValueStack);
@@ -413,9 +455,10 @@ END Drop;
 PROCEDURE DumpStack(VAR stk: ValueStack);
 VAR i: INTEGER;
 BEGIN
-  (* Dump any remaining stk content *)
+  (* Dump any remaining stack content *)
   IF stk.top = 0 THEN wsl("stack empty.")
-  ELSE wsl("stk content:");
+  ELSE wsl("stack content:");
+    Assert(stk.top >= 0, "Negative stack top index.");
     FOR i := 0 TO stk.top-1 DO
       ws("  ["); wi(i); ws("] ");
       wvalue(stk.stk[stk.top-1-i]); wl;
@@ -633,127 +676,6 @@ BEGIN BootTop := 0;
 RETURN current END LoadBoostrap;
 
 
-(* ------------------------ Regroup experimentation ------------------------- *)
-
-PROCEDURE AlignUp(VAR addr: Address; unit: Address);
-BEGIN
-  addr := addr + unit-1;
-  addr := addr - addr MOD unit;
-END AlignUp;
-
-PROCEDURE ClearUsage;
-VAR i: Address; block: BlockPtr; header: AtomPtr;
-BEGIN
-  (* Set all non-flat nodes sage to 0 *)
-  FOR i := 0 TO AtomCount-1 DO SETUSAGE(Memory[i].next, 0) END;
-  (* Set all flat header usages to 2 *)
-  block := Blocks;
-  WHILE block # NIL DO
-    i := 0;
-    WHILE i < block.in DO
-      header := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(block.bytes[i]));
-      Assert(KIND(header.next) = Flat, "Expected header kind in block to be flat.");
-      SETUSAGE(header.next, 0);
-      i := header.data - SYSTEM.ADR(block.bytes);
-      AlignUp(i, SIZE(AtomHeader));
-    END;
-    block := block.next
-  END
-END ClearUsage;
-
-PROCEDURE AddUsage(atom: AtomPtr; usage: INTEGER);
-VAR count: Address; uncounted: BOOLEAN; link: AtomPtr;
-BEGIN
-  uncounted := TRUE;
-  WHILE (atom # NIL) & uncounted DO
-    count := USAGE(atom.next);
-    uncounted := count = 0;
-    INC(count, usage); usage := 1;
-    IF count > 2 THEN count := 2 END;
-    SETUSAGE(atom.next, count);
-    IF uncounted & (KIND(atom.next) = Link) THEN
-      AddUsage(ATOMPTR(atom.data), 2)
-    END;
-    atom := ATOMPTR(atom.next)
-  END
-END AddUsage;
-
-PROCEDURE GetFlatCount(header: AtomPtr): Address;
-VAR count: Address;
-BEGIN count := 0;
-  WHILE (header # NIL)
-      & (USAGE(header.next) = 1)
-      & (KIND(header.next) = Int) DO
-    INC(count);  header := ATOMPTR(header.next)
-  END;
-RETURN count END GetFlatCount;
-
-PROCEDURE FlattenTree(atom: AtomPtr);
-VAR next, flatheader, nest: AtomPtr; newblock: BlockPtr;
-BEGIN
-  WHILE atom # NIL DO
-    (* Assert(PARAM(atom.next) = 0, "Unexpected link to flat list."); *)
-    next := ATOMPTR(atom.next);
-    IF GetFlatCount(next) >= MinFlatRun THEN
-      (* Move flat list (starting at next) off into a flat atom *)
-      IF Blocks # NIL THEN AlignUp(Blocks.in, SIZE(AtomHeader)) END;
-      IF (Blocks = NIL) OR (Blocks.in + 32 > LEN(Blocks.bytes)) THEN
-        NEW(newblock); newblock.in := 0; newblock.next := Blocks;
-        Blocks := newblock
-      END;
-      flatheader := ATOMPTR(SYSTEM.ADR(Blocks.bytes[Blocks.in]));
-      INC(Blocks.in, SIZE(AtomHeader));
-      LOOP
-        IF ~CompressValue(KIND(next.next), next.data, Blocks^) THEN EXIT END;
-        next := ATOMPTR(next.next);
-        IF (next = NIL)
-        OR (USAGE(next.next) # FlatUse)
-        OR (KIND(next.next) # Int) THEN EXIT END
-      END;
-      nest := ATOMPTR(atom.next);
-      SETPTR(atom.next, flatheader);
-      SETPARAM(atom.next, SIZE(AtomHeader));  (* Address first compressed atom *)
-      SETUSAGE(atom.next, MultiUse);
-      flatheader.next := SYSTEM.VAL(Address, next) + MultiUse*4 + Flat;
-      flatheader.data := SYSTEM.ADR(Blocks.bytes) + Blocks.in;
-      (* Recursively add any referenced sublists *)
-      WHILE nest # next DO
-        IF KIND(nest.next) = Link THEN FlattenTree(ATOMPTR(nest.data)) END;
-        SETUSAGE(nest.next, Unused);
-        nest := ATOMPTR(nest.next)
-      END
-    END;
-    IF KIND(atom.next) = Link THEN FlattenTree(ATOMPTR(atom.data)) END;
-    atom := next;
-  END
-END FlattenTree;
-
-PROCEDURE ReclaimUnusedAtoms;
-VAR i: Address;
-BEGIN
-  Free := NIL;
-  FOR i := 0 TO AtomCount-1 DO
-    IF USAGE(Memory[i].next) = 0 THEN
-      Memory[i].next := SYSTEM.VAL(Address, Free);
-      Memory[i].data := 0;
-      SETUSAGE(Memory[i].next, 3);
-      Free := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory[i]));
-    END
-  END
-END ReclaimUnusedAtoms;
-
-PROCEDURE Regroup;  (* Tidy simple lists out of the workspace *)
-VAR i: INTEGER;
-BEGIN
-  ClearUsage;
-  AddUsage(Boot.header, 2);
-  (* Should also add any stacked links *)
-  FOR i := 0 TO 25 DO IntrinsicVariable[i] := 0 END;  (* Or could add them *)
-  FlattenTree(Boot.header);
-  ReclaimUnusedAtoms
-END Regroup;
-
-
 (* --------------------------- Regroup debugging ---------------------------- *)
 
 PROCEDURE whexbytes(VAR buf: ARRAY OF Int8; len: Address);
@@ -769,10 +691,10 @@ PROCEDURE ShowUsage;
 CONST rowlength = 100;
 VAR i: INTEGER;
 BEGIN
-  wsl("Atom usage:");
+  wsl("workspace atom usage:");
   i := 0; WHILE i < AtomCount DO
     IF i MOD rowlength = 0 THEN ws("  ") END;
-    wc(CHR(USAGE(Memory[i].next) + ORD('0')));
+    wc(CHR(USAGE(SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory[i]))) + ORD('0')));
     INC(i);
     IF i MOD rowlength = 0 THEN wl END
   END;
@@ -785,10 +707,12 @@ BEGIN
   hdr := ATOMPTR(addr);
   ws("Header at ");  wx(addr, 16); wl;
   ws("  next: ");    wx(hdr.next,16);
-  ws(" (usage ");    wi(USAGE(hdr.next));
-  ws(", kind ");     wi(KIND(hdr.next)); wsl(")");
+  ws(" (usage ");    wi(USAGE(hdr));
+  ws(", kind ");     wkind(KIND(hdr)); wsl(")");
   ws("  data: ");    wx(hdr.data,16);
-  ws(" => length "); wi(hdr.data - (addr + SIZE(AtomHeader))); wsl(" bytes.");
+  IF KIND(hdr) = Flat THEN
+    ws(" => length "); wi(hdr.data - (PTR(addr) + SIZE(AtomHeader))); wsl(" bytes.")
+  END;
   CheckLink("DumpHeader", addr);
   InitLink(val, addr);
   ws("  content: '");
@@ -840,6 +764,18 @@ BEGIN
   block := Blocks;
   WHILE block # NIL DO DumpBlock(block); block := block.next END
 END DumpBlocks;
+
+PROCEDURE CheckVariableUsages;
+VAR i: INTEGER; v: Value;
+BEGIN
+  FOR i := 0 TO 25 DO
+    IF IntrinsicVariable[i] # 0 THEN
+      ws("Intrinsic '"); wu(ORD('a') + i); ws("' ");
+      InitLink(v, IntrinsicVariable[i]);
+      DumpValue(v)
+    END
+  END
+END CheckVariableUsages;
 
 PROCEDURE TestMakeFlatValue(t, a: Address; verbose: BOOLEAN);
 VAR buf: Block; i: Address; v: Value;
@@ -911,6 +847,279 @@ BEGIN
   TestFlattening
 END OutdatedTests;
 
+
+(* --------------------------------- Regroup ---------------------------------*)
+
+PROCEDURE WeighUsage(list: AtomPtr);
+(* Note: No list in block storage may continue with or link to an atom
+   in workspace memory. *)
+BEGIN
+  WHILE (list # NIL) & (KIND(list) < Flat) DO  (* Stops at first atom in block storage. *)
+    IF (KIND(list) = Link) & (PARAM(list.data) = 0) THEN  (* Link into workspace *)
+      WeighUsage(ATOMPTR(list.data))
+    END;
+    IF USAGE(list) = 0 THEN
+      SETUSAGE(list, 1);
+      list := ATOMPTR(list.next);
+    ELSE
+      SETUSAGE(list, 2);
+      list := NIL
+    END;
+  END
+END WeighUsage;
+
+
+PROCEDURE NewFlatHeader(VAR hdr: AtomPtr);
+VAR newblock: BlockPtr;
+BEGIN
+  IF Blocks # NIL THEN AlignUp(Blocks.in, SIZE(AtomHeader)) END;
+  IF (Blocks = NIL) OR (Blocks.in + 32 > LEN(Blocks.bytes)) THEN
+    NEW(newblock); newblock.in := 0; newblock.next := Blocks;
+    Blocks := newblock
+  END;
+  hdr := ATOMPTR(SYSTEM.ADR(Blocks.bytes[Blocks.in]));
+  INC(Blocks.in, SIZE(AtomHeader));
+  hdr.next := Flat;
+  hdr.data := 0
+END NewFlatHeader;
+
+
+PROCEDURE Storeable(a: AtomPtr): BOOLEAN;
+BEGIN RETURN (KIND(a) < Flat)
+           & ((KIND(a) # Link) OR (PARAM(a.data) # 0))
+           & (USAGE(a) = FlatUse)
+END Storeable;
+
+
+PROCEDURE StoreRun(VAR link: Address);  (* Move run starting at link to block storage. *)
+VAR l: AtomPtr; flatheader: AtomPtr;
+BEGIN
+  ws("Move run of atoms to block storage starting at link "); wx(link,1); wsl(".");
+  Assert(Storeable(ATOMPTR(link)), "StoreRun passed unstoreable atom.");
+  NewFlatHeader(flatheader);
+  l := ATOMPTR(link);
+
+  WHILE (l # NIL) & Storeable(l) & CompressValue(KIND(l), l.data, Blocks^) DO
+
+    ws("Compressed atom at "); wx(SYSTEM.VAL(Address, l), 1);
+    ws(": next "); wx(l.next, 1);  ws(": data "); wx(l.data, 1); wfl;
+
+    SETUSAGE(l, 0);  (* l's content has moved, the original l is now free. *)
+    l := ATOMPTR(l.next);
+
+    ws(" .. next l "); wx(SYSTEM.VAL(Address, l), 1); wsl(".");
+  END;
+
+  Assert((l = NIL) OR (KIND(l) # Flat), "Cannot store run that continues in workspace memory.");
+  SETLINK(flatheader.next, SYSTEM.VAL(Address, l));
+  IF (l # NIL) & (KIND(l) = Flat) THEN SETPARAM(flatheader.next, SIZE(AtomHeader)) END;
+  flatheader.data := SYSTEM.ADR(Blocks.bytes) + Blocks.in;
+
+  ws("Link to workspace list was "); wx(link,1);
+  SETPTR(link, flatheader);
+  SETPARAM(link, SIZE(AtomHeader));
+  ws(", now linked to block storage "); wx(link,1); wsl(".");
+END StoreRun;
+
+
+(* Chain moved as much as possible of a list into block storage.
+   The rule is that atoms in block storage may not point back into workspace
+   memory either through their next pointer or as a Link.
+   Therefore before attempting to move the chain we have been passed, we
+   first move any lists it links to.
+   Secondly we move chains at the the end of the list before those
+   earlier on.
+ *)
+PROCEDURE Chain(VAR list: Address);  (* Usually passed the next or data field of an atomheader. *)
+VAR prev, storeable, l: AtomPtr; i: INTEGER;
+BEGIN
+  ws("Chain("); wx(list,1); wsl(")");
+  Assert(PARAM(list) = 0, "Chain expects to be passed link to list in workspace.");
+  Assert(KIND(ATOMPTR(list)) < Flat, "Chain expects to be passed link to non-flat atom.");
+
+  (* First try moving flatteneable parts of sublists to block storage. In the
+     process record the first storeable atom. *)
+  l := ATOMPTR(list);  storeable := NIL;
+  prev := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(list));
+  WHILE (l # NIL) & (KIND(l) < Flat) DO
+    IF (KIND(l) = Link) & (USAGE(l) = FlatUse) & (PARAM(l.data) = 0) THEN
+      Chain(l.data);
+    END;
+    ws("Test storeability. prev "); wx(SYSTEM.VAL(Address, prev),1);
+    ws(", l "); wx(SYSTEM.VAL(Address, l),1);
+    ws(", USAGE "); wi(USAGE(l));
+    ws(", KIND "); wkind(KIND(l));
+    ws(", data "); wx(l.data,1);
+    ws(", Storable(l) "); wb(Storeable(l));
+    wsl(".");
+    IF Storeable(l) THEN
+      IF storeable = NIL THEN storeable := prev END
+    ELSE
+      storeable := NIL;
+    END;
+    prev := l;
+    l := ATOMPTR(l.next)
+  END;
+
+  IF (storeable # NIL) & ((l = NIL) OR (KIND(l) = Flat)) THEN
+    (* Are there enough chainable atoms to make it worthwhile? *)
+    (*
+    i := 0;
+    l := ATOMPTR(storeable.next);
+    WHILE (l # NIL) & (i < MinFlatRun) DO
+      Assert(Storeable(l), "Unstoreable atom in run (incorrectly) found to be storeable.");
+      l := ATOMPTR(l.next);  INC(i)
+    END;
+
+    IF i >= MinFlatRun THEN
+    *)
+      StoreRun(storeable.next)
+    (*
+    ELSE
+      ws(".. Not storing list "); wx(list,1);
+      ws(" as storeable length only "); wi(i); wsl(".")
+    END
+    *)
+  ELSE
+    ws(".. Nothing to store from list "); wx(list,1);
+    ws(": storeable "); wx(SYSTEM.VAL(Address, storeable),1);
+    ws(", l "); wx(SYSTEM.VAL(Address, l),1); wsl(".");
+  END
+END Chain;
+
+
+PROCEDURE ReclaimUnusedAtoms;
+VAR i: Address;
+BEGIN
+  Free := NIL;
+  FOR i := 0 TO AtomCount-1 DO
+    IF USAGE(SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory[i]))) = 0 THEN
+      Memory[i].next := SYSTEM.VAL(Address, Free);
+      Memory[i].data := 0;
+      SETUSAGE(SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory[i])), 3);
+      Free := SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory[i]));
+    END
+  END
+END ReclaimUnusedAtoms;
+
+
+PROCEDURE RegroupAndCollect;
+VAR i: Address; flatheader: AtomPtr; link: Address;
+BEGIN
+  (* Initialise all workspace atom usage counts to zero *)
+  FOR i := 0 TO AtomCount-1 DO SETUSAGE(SYSTEM.VAL(AtomPtr, SYSTEM.ADR(Memory[i])), 0) END;
+
+  ws("Boot usage initially "); wi(USAGE(ATOMPTR(IntrinsicVariable[25]))); wl;
+
+  (* Weigh all lists beginning at intrinisic variables. *)
+  FOR i := 0 TO 25 DO
+    IF IntrinsicVariable[i] # 0 THEN
+      WeighUsage(ATOMPTR(IntrinsicVariable[i]))
+    END
+  END;
+
+  ws("Boot link usage after WeighUsage "); wi(USAGE(ATOMPTR(IntrinsicVariable[25]))); wl;
+
+  ws("After weighing, before chaining ");
+  ShowUsage;
+  CheckVariableUsages;
+
+  (* Chain all lists beginning at intrinisic variables. *)
+  FOR i := 0 TO 25 DO
+    IF IntrinsicVariable[i] # 0 THEN
+      Chain(IntrinsicVariable[i])
+    END
+  END;
+
+  ws("After chaining before reclaiming ");
+  ShowUsage;
+  CheckVariableUsages;
+
+  (*
+  ReclaimUnusedAtoms;
+
+  ws("After reclaiming ");
+  ShowUsage
+  *)
+
+END RegroupAndCollect;
+
+(* --- *)
+
+
+(* ---------------------- Formatted list of all atoms --------------------- *)
+
+PROCEDURE AddList(l: Address);
+VAR list: AtomList;  v: Value;
+BEGIN
+  IF l # 0 THEN
+    list := Lists;  (* Check first whether this list is already recorded *)
+    WHILE (list # NIL) & (list.atom # l) DO list := list.next END;
+
+    IF list = NIL THEN
+      (* List is not already recorded, add it. *)
+      NEW(list);
+      list.atom := l;
+
+      InitLink(v, l);
+      WHILE IsLink(v) DO
+        IF v.kind = Link THEN AddList(v.data) END;
+        Next(v)
+      END;
+
+      list.next := Lists;  Lists := list
+    END
+  END
+END AddList;
+
+PROCEDURE NameList(link: Address): CHAR;
+VAR i: INTEGER;
+BEGIN
+  FOR i := 0 TO 25 DO
+    IF IntrinsicVariable[i] = link THEN RETURN CHR(ORD('a') + i) END
+  END;
+  RETURN ' '
+END NameList;
+
+PROCEDURE ListList(link: Address);
+VAR v: Value; inworkspace: BOOLEAN;
+BEGIN inworkspace := TRUE;
+  wc(NameList(link)); wc(" ");
+  wx(link,16); ws(": ");
+  InitLink(v, link);
+  WHILE IsLink(v) DO
+    IF (v.pos = 0) # inworkspace THEN
+      IF v.pos # 0 THEN wc('{') ELSE wc('}') END;
+      inworkspace := v.pos = 0;
+    END;
+    IF v.kind = Link THEN
+      wc("<"); wx(v.data,1); wc(">")
+    ELSE
+      CASE v.data OF
+      |0AH: ws("<l>")
+      |0DH:
+      |20H:
+      ELSE wu(v.data)
+      END
+    END;
+    Next(v);
+  END;
+  IF ~inworkspace THEN wc("}") END;
+  wl
+END ListList;
+
+PROCEDURE ListAll;
+VAR i: INTEGER; l: AtomList;
+BEGIN
+  Lists := NIL;
+  FOR i := 0 TO 25 DO AddList(IntrinsicVariable[i]) END;
+  l := Lists;
+  WHILE l # NIL DO ListList(l.atom); l := l.next END
+END ListAll;
+
+
+
+
 (* ----------------------------- Startup code ----------------------------- *)
 
 BEGIN
@@ -919,29 +1128,36 @@ BEGIN
   ws("Address size is "); wi(SIZE(Address)*8); wsl(" bits.");
   InitMemory;
 
-  (* Load the bootstrap *)
-  InitLink(Boot, SYSTEM.VAL(Address, LoadBoostrap()));
+  (* Load the bootstrap as intrinsic variable 'z'. *)
+  IntrinsicVariable[25] := SYSTEM.VAL(Address, LoadBoostrap());
 
   (* Run the bootstrap *)
   wsl("Running bootstrap before regroup.");
-  Program := Boot;  WHILE IsLink(Program) DO Step END;
+  InitLink(Program, IntrinsicVariable[25]);
+  WHILE IsLink(Program) DO Step END;
   wlc; ws("Bootstrap complete, "); DumpStack(Arg);
 
-  Regroup;  ws("Usage after regroup, "); ShowUsage;
+  RegroupAndCollect;
 
-  wsl("Run bootstrap after regroup.");
-  Program := Boot;  WHILE IsLink(Program) DO Step END;
+  wl; wsl("List of all lists after first RegroupAndCollect:");
+  ListAll; wl;
 
-  (* Check that bootstrap runs OK after two regroups. *)
-  Regroup;  ws("Usage after second regroup, "); ShowUsage;
+  wsl("Dump of Boot after first RegroupAndCollect:");
+  wlink(IntrinsicVariable[25]);
 
-  (* Check that bootstrap is still intact *)
-  wsl("Content of Boot after second regroup:");
-  wvalue(Boot);
+  wsl("Run bootstrap after first RegroupAndCollect.");
+  InitLink(Program, IntrinsicVariable[25]);
+  WHILE IsLink(Program) DO Step END;
 
-  wsl("Run bootstrap after second regroup.");
-  Program := Boot;  WHILE IsLink(Program) DO Step END;
+  RegroupAndCollect;
+  ws("Usage after second RegroupAndCollect, "); ShowUsage;
 
+  wsl("Dump of Boot after second RegroupAndCollect:");
+  wlink(IntrinsicVariable[25]);
+
+  wsl("Run bootstrap after second RegroupAndCollect.");
+  InitLink(Program, IntrinsicVariable[25]);
+  WHILE IsLink(Program) DO Step END;
 
 END dam.
 
