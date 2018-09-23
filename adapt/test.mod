@@ -1,119 +1,147 @@
 MODULE test;
 
-IMPORT w, a, bootstrap, interpreter, dumping, SYSTEM;
+IMPORT w, a, bootstrap, interpreter, dumping, reorganise, SYSTEM;
 
 
 
-PROCEDURE TestMakeFlatValue(t, addr: a.Address; verbose: BOOLEAN);
-VAR buf: a.Block; i: a.Address; v: a.Value;
-    dummy: a.AtomHeader;
-BEGIN
-  IF verbose THEN w.x(addr,16) END;
+PROCEDURE TestMakeFlatValue(data: a.Cell; verbose: BOOLEAN);
+VAR buf: reorganise.Block; tested, addr: a.Cell;
+BEGIN  NEW(buf);
+  IF verbose THEN w.x(data,16) END;
   buf.in := 0;
-  IF a.CompressValue(t, addr, buf) THEN END;
+  IF reorganise.Compress(data, buf) THEN END;
   IF verbose THEN w.s(" flattened: "); dumping.whexbytes(buf.bytes, buf.in) END;
 
-  v.header := a.ATOMPTR(SYSTEM.ADR(dummy));
-  dummy.data := SYSTEM.ADR(buf.bytes) + buf.in;
-  a.ExpandValue(SYSTEM.ADR(buf.bytes), v);
+  addr := SYSTEM.ADR(buf.bytes);
+  a.Expand(addr, tested);
 
   IF verbose THEN
-    w.s(", decoded: type "); w.x(v.kind,1); w.s(" data "); w.x(v.data,16); w.l
+    w.s(", decoded: "); w.x(tested,16); w.l
   END;
-  w.Assert(t=v.kind,   "Flat value type lost.");
-  w.Assert(addr=v.data,   "Flat value data lost.");
-  w.Assert(v.next = 0, "More bytes encoded than decoded.");
+  w.Assert(data=tested,   "Flat value data lost.");
+  w.Assert(addr - SYSTEM.ADR(buf.bytes) = buf.in, "Byte count encoded # that decoded.");
 END TestMakeFlatValue;
 
+
 PROCEDURE TestFlattening;
-VAR addr: a.Address;
+VAR addr: a.Cell;
 BEGIN
-  TestMakeFlatValue(0, 0,     TRUE);
-  TestMakeFlatValue(0, 1,     TRUE);
-  TestMakeFlatValue(0, 2,     TRUE);
-  TestMakeFlatValue(0, 127,   TRUE);
-  TestMakeFlatValue(0, 128,   TRUE);
-  TestMakeFlatValue(0, 2047,  TRUE);
-  TestMakeFlatValue(0, 2048,  TRUE);
-  TestMakeFlatValue(0, 4095,  TRUE);
-  TestMakeFlatValue(0, 4096,  TRUE);
-  TestMakeFlatValue(0, -1,    TRUE);
-  TestMakeFlatValue(0, -2,    TRUE);
-  TestMakeFlatValue(0, -127,  TRUE);
-  TestMakeFlatValue(0, -128,  TRUE);
-  TestMakeFlatValue(0, -2048, TRUE);
-  TestMakeFlatValue(0, -2049, TRUE);
-  TestMakeFlatValue(0, -4096, TRUE);
-  TestMakeFlatValue(0, -4097, TRUE);
-  TestMakeFlatValue(1, 0,     TRUE);
-  TestMakeFlatValue(1, 1,     TRUE);
-  TestMakeFlatValue(1, 2,     TRUE);
-  TestMakeFlatValue(1, 127,   TRUE);
+  TestMakeFlatValue(0000H, TRUE);
+  TestMakeFlatValue(0001H, TRUE);
+  TestMakeFlatValue(0002H, TRUE);
+  TestMakeFlatValue(007FH, TRUE);
+  TestMakeFlatValue(0080H, TRUE);
+  TestMakeFlatValue(00FFH, TRUE);
+  TestMakeFlatValue(0100H, TRUE);
+  TestMakeFlatValue(01FFH, TRUE);
+  TestMakeFlatValue(0200H, TRUE);
+  TestMakeFlatValue(03FFH, TRUE);
+  TestMakeFlatValue(0400H, TRUE);
+  TestMakeFlatValue(07FFH, TRUE);
+  TestMakeFlatValue(0800H, TRUE);
+  TestMakeFlatValue(0FFFH, TRUE);
+  TestMakeFlatValue(1000H, TRUE);
+  TestMakeFlatValue(1FFFH, TRUE);
+  TestMakeFlatValue(2000H, TRUE);
+  TestMakeFlatValue(3FFFH, TRUE);
+  TestMakeFlatValue(4000H, TRUE);
+  TestMakeFlatValue(7FFFH, TRUE);
+  TestMakeFlatValue(8000H, TRUE);
 
-  FOR addr := 0 TO 5000000 DO TestMakeFlatValue(0, addr, FALSE) END;
-  FOR addr := 0 TO 5000000 DO TestMakeFlatValue(0, -addr, FALSE) END;
+  TestMakeFlatValue(-0001H, TRUE);
+  TestMakeFlatValue(-0002H, TRUE);
+  TestMakeFlatValue(-0003H, TRUE);
+  TestMakeFlatValue(-0080H, TRUE);
+  TestMakeFlatValue(-0081H, TRUE);
+  TestMakeFlatValue(-0100H, TRUE);
+  TestMakeFlatValue(-0101H, TRUE);
+  TestMakeFlatValue(-0200H, TRUE);
+  TestMakeFlatValue(-0201H, TRUE);
+  TestMakeFlatValue(-0400H, TRUE);
+  TestMakeFlatValue(-0401H, TRUE);
+  TestMakeFlatValue(-0800H, TRUE);
+  TestMakeFlatValue(-0801H, TRUE);
+  TestMakeFlatValue(-1000H, TRUE);
+  TestMakeFlatValue(-1001H, TRUE);
+  TestMakeFlatValue(-2000H, TRUE);
+  TestMakeFlatValue(-2001H, TRUE);
+  TestMakeFlatValue(-4000H, TRUE);
+  TestMakeFlatValue(-4001H, TRUE);
+  TestMakeFlatValue(-8000H, TRUE);
+  TestMakeFlatValue(-8001H, TRUE);
 
-  TestMakeFlatValue(0, 01FFFFFFFFFFFFFFEH, TRUE);
-  TestMakeFlatValue(0, 01FFFFFFFFFFFFFFFH, TRUE);
-  TestMakeFlatValue(0, 02000000000000000H, TRUE);
-  TestMakeFlatValue(0, 02000000000000001H, TRUE);
-  TestMakeFlatValue(0, 07FFFFFFFFFFFFFFEH, TRUE);
-  TestMakeFlatValue(0, 07FFFFFFFFFFFFFFFH, TRUE);
-  TestMakeFlatValue(0, 08000000000000000H, TRUE);
-  TestMakeFlatValue(0, 08000000000000001H, TRUE);
-  TestMakeFlatValue(0, 0DFFFFFFFFFFFFFFEH, TRUE);
-  TestMakeFlatValue(0, 0DFFFFFFFFFFFFFFFH, TRUE);
-  TestMakeFlatValue(0, 0E000000000000000H, TRUE);
-  TestMakeFlatValue(0, 0E000000000000001H, TRUE);
-  TestMakeFlatValue(0, 0FFFFFFFFFFFFFFFEH, TRUE);
-  TestMakeFlatValue(0, 0FFFFFFFFFFFFFFFFH, TRUE);
+  FOR addr := 0 TO 5000000 DO TestMakeFlatValue(addr, FALSE) END;
+  FOR addr := 0 TO 5000000 DO TestMakeFlatValue(-addr, FALSE) END;
+
+  TestMakeFlatValue(01FFFFFFFFFFFFFFEH, TRUE);
+  TestMakeFlatValue(01FFFFFFFFFFFFFFFH, TRUE);
+  TestMakeFlatValue(02000000000000000H, TRUE);
+  TestMakeFlatValue(02000000000000001H, TRUE);
+  TestMakeFlatValue(07FFFFFFFFFFFFFFEH, TRUE);
+  TestMakeFlatValue(07FFFFFFFFFFFFFFFH, TRUE);
+  TestMakeFlatValue(08000000000000000H, TRUE);
+  TestMakeFlatValue(08000000000000001H, TRUE);
+  TestMakeFlatValue(0DFFFFFFFFFFFFFFEH, TRUE);
+  TestMakeFlatValue(0DFFFFFFFFFFFFFFFH, TRUE);
+  TestMakeFlatValue(0E000000000000000H, TRUE);
+  TestMakeFlatValue(0E000000000000001H, TRUE);
+  TestMakeFlatValue(0FFFFFFFFFFFFFFFEH, TRUE);
+  TestMakeFlatValue(0FFFFFFFFFFFFFFFFH, TRUE);
 END TestFlattening;
-
 
 
 BEGIN
   w.sl("Adapt (Algorithms, Data And Prefix Trees) - test harness.");
 
-  w.Assert(SYSTEM.VAL(a.Address, NIL) = 0, "Expected NIL to be zero.");
-  w.s("Address size is "); w.i(SIZE(a.Address)*8); w.sl(" bits.");
+  (*TestFlattening;*)
+
+  w.Assert(SYSTEM.VAL(a.Cell, NIL) = 0, "Expected NIL to be zero.");
+  w.s("Address size is "); w.i(SIZE(a.Cell)*8); w.sl(" bits.");
 
 
   (* Load the bootstrap as intrinsic variable 'z'. *)
   a.IntrinsicVariable[25] := bootstrap.Load("test.boot");
 
+  w.sl("Dump of Boot as loaded:");
+  interpreter.wlink(a.IntrinsicVariable[25]);
+
   (* Run the bootstrap *)
-  w.sl("Running bootstrap before regroup.");
+  w.sl("Running bootstrap before Collect.");
   a.InitLink(interpreter.Program, a.IntrinsicVariable[25]);
   WHILE a.IsLink(interpreter.Program) DO interpreter.Step END;
   w.lc; w.s("Bootstrap complete, ");
   interpreter.DumpStack(interpreter.Arg);
 
-  w.l; w.sl("All lists.");
+  w.l; w.sl("All lists before Collect.");
   dumping.ListAll;
 
-  (*
-  RegroupAndCollect;
+  reorganise.Collect;
 
-  w.l; w.sl("List of all lists after first RegroupAndCollect:");
-  ListAll; w.l;
+  w.sl("Dump of Boot after Collect:");
+  interpreter.wlink(a.IntrinsicVariable[25]);
 
-  w.sl("Dump of Boot after first RegroupAndCollect:");
-  wlink(IntrinsicVariable[25]);
+  w.l; w.sl("All lists after Collect.");
+  dumping.ListAll;
 
-  w.sl("Run bootstrap after first RegroupAndCollect.");
-  InitLink(interpreter.Program, IntrinsicVariable[25]);
-  WHILE IsLink(interpreter.Program) DO Step END;
+  w.sl("Running bootstrap after Collect.");
+  a.InitLink(interpreter.Program, a.IntrinsicVariable[25]);
+  WHILE a.IsLink(interpreter.Program) DO interpreter.Step END;
+  w.lc; w.s("Bootstrap complete, ");
+  interpreter.DumpStack(interpreter.Arg);
 
-  RegroupAndCollect;
-  w.s("Usage after second RegroupAndCollect, "); ShowUsage;
+  reorganise.Collect;
 
-  w.sl("Dump of Boot after second RegroupAndCollect:");
-  wlink(IntrinsicVariable[25]);
+  w.sl("Dump of Boot after second Collect:");
+  interpreter.wlink(a.IntrinsicVariable[25]);
 
-  w.sl("Run bootstrap after second RegroupAndCollect.");
-  InitLink(interpreter.Program, IntrinsicVariable[25]);
-  WHILE IsLink(interpreter.Program) DO Step END;
-  *)
+  w.l; w.sl("All lists after second Collect.");
+  dumping.ListAll;
+
+  w.sl("Running bootstrap after second Collect.");
+  a.InitLink(interpreter.Program, a.IntrinsicVariable[25]);
+  WHILE a.IsLink(interpreter.Program) DO interpreter.Step END;
+  w.lc; w.s("Bootstrap complete, ");
+  interpreter.DumpStack(interpreter.Arg);
 
 END test.
 

@@ -5,7 +5,7 @@ IMPORT w, a, SYSTEM;
 TYPE
   AtomList = POINTER TO AtomListDesc;  (* For ListAll debugging dump. *)
   AtomListDesc = RECORD
-    atom: a.Address;
+    atom: a.Cell;
     next: AtomList;
   END;
 
@@ -15,9 +15,9 @@ VAR
 
 (* --------------------------------- Values --------------------------------- *)
 
-PROCEDURE^ DumpHeader(addr: a.Address);
+PROCEDURE^ DumpHeader*(addr: a.Cell);
 
-PROCEDURE wkind(k: a.Address);
+PROCEDURE wkind*(k: a.Cell);
 BEGIN CASE k OF
   |a.Int:  w.s("Int")
   |a.Link: w.s("Link")
@@ -26,16 +26,16 @@ BEGIN CASE k OF
   END
 END wkind;
 
-PROCEDURE DumpValue(v: a.Value);
-VAR link: a.Address;
+PROCEDURE DumpValue*(v: a.Value);
+VAR link: a.Cell;
 BEGIN
   w.s("DumpValue");
-  w.s(". Header at ");   w.x(SYSTEM.VAL(a.Address, v.header), 16);
-  IF v.header # NIL THEN
-    w.s(" ("); w.x(v.header.next, 16); w.s(", "); w.x(v.header.data, 16); w.s(")");
+  w.s(". Header at ");   w.x(SYSTEM.VAL(a.Cell, v.atom), 16);
+  IF v.atom # NIL THEN
+    w.s(" ("); w.x(v.atom.next, 16); w.s(", "); w.x(v.atom.data, 16); w.s(")");
     w.l;
-    w.s("  header usage "); w.i(a.USAGE(v.header));
-    w.s(", header kind ");  wkind(a.KIND(v.header));
+    w.s("  header usage "); w.i(a.USAGE(v.atom));
+    w.s(", header kind ");  wkind(a.KIND(v.atom));
   END;
   w.s(", current kind "); wkind(v.kind);
   w.s(", current data "); w.x(v.data, 1);
@@ -44,9 +44,9 @@ BEGIN
     w.s(", next "); w.x(v.next, 16)
   END;
   w.l;
-  IF a.KIND(v.header) = a.Flat THEN
+  IF a.KIND(v.atom) = a.Flat THEN
     w.sl("Flat block ");
-    link := SYSTEM.ADR(v.header.next);  a.SETPARAM(link, SIZE(a.AtomHeader));
+    link := SYSTEM.ADR(v.atom.next);  a.SETPARAM(link, SIZE(a.AtomDesc));
     DumpHeader(link)
   END;
 END DumpValue;
@@ -54,8 +54,8 @@ END DumpValue;
 
 (* --------------------------- Regroup debugging ---------------------------- *)
 
-PROCEDURE whexbytes*(buf: ARRAY OF a.Int8; len: a.Address);
-VAR i: a.Address;
+PROCEDURE whexbytes*(buf: ARRAY OF a.Int8; len: a.Cell);
+VAR i: a.Cell;
 BEGIN
   FOR i := 0 TO len-1 DO
     w.x(buf[i],2);
@@ -63,33 +63,40 @@ BEGIN
   END
 END whexbytes;
 
-PROCEDURE ShowUsage;
+PROCEDURE ShowUsage*;
 CONST rowlength = 100;
-VAR i: INTEGER;
-BEGIN
+VAR i: INTEGER; usage, free, count: a.Cell;
+BEGIN free := 0;
   w.sl("workspace atom usage:");
   i := 0; WHILE i < a.AtomCount DO
     IF i MOD rowlength = 0 THEN w.s("  ") END;
-    w.c(CHR(a.USAGE(SYSTEM.VAL(a.AtomPtr, SYSTEM.ADR(a.Memory[i]))) + ORD('0')));
+    usage := a.USAGE(SYSTEM.VAL(a.Atom, SYSTEM.ADR(a.Memory[i])));
+    IF (usage = 0) OR (usage = 3) THEN INC(free) END;
+    w.c(CHR(usage + ORD('0')));
     INC(i);
     IF i MOD rowlength = 0 THEN w.l END
   END;
   IF i MOD rowlength # 0  THEN w.l END;
+  w.s("Atom space used: "); w.i(a.AtomCount - free);
+  w.s(" atoms, "); w.i((a.AtomCount - free) * SIZE(a.AtomDesc));
+  w.sl(" bytes.");
 END ShowUsage;
 
-PROCEDURE DumpHeader(addr: a.Address);
-VAR hdr: a.AtomPtr; val: a.Value;
+
+PROCEDURE DumpHeader*(addr: a.Cell);
+VAR hdr: a.Atom; val: a.Value;
 BEGIN
-  hdr := a.ATOMPTR(addr);
+  w.Assert(a.PARAM(addr) = 0, "DumpHeader passed link with non-zero param.");
+  hdr := a.ATOM(addr);
   w.s("Header at ");  w.x(addr, 16); w.l;
   w.s("  next: ");    w.x(hdr.next,16);
   w.s(" (usage ");    w.i(a.USAGE(hdr));
   w.s(", kind ");     wkind(a.KIND(hdr)); w.sl(")");
   w.s("  data: ");    w.x(hdr.data,16);
   IF a.KIND(hdr) = a.Flat THEN
-    w.s(" => length "); w.i(hdr.data - (a.PTR(addr) + SIZE(a.AtomHeader))); w.sl(" bytes.")
+    w.s(" => flat addr "); w.i(a.ADDR(hdr.data));
+    w.s(", length "); w.i(a.PARAM(hdr.data)); w.sl(" bytes.")
   END;
-  a.CheckLink("DumpHeader", addr);
   a.InitLink(val, addr);
   w.s("  content: '");
   LOOP
@@ -104,42 +111,6 @@ BEGIN
   w.sl("'.");
 END DumpHeader;
 
-PROCEDURE DumpBlock(block: a.BlockPtr);
-CONST BytesPerLine = 32;
-VAR i: a.Address; addr: a.Address; hdr: a.AtomPtr;
-BEGIN
-  w.s("Block at "); w.x(SYSTEM.VAL(a.Address, block),16); w.l;
-  w.s("  in:   "); w.i(block.in); w.l;
-  w.s("  next: "); w.x(SYSTEM.VAL(a.Address, block.next),16); w.l;
-
-  (* Hex dump *)
-  i := 0;
-  WHILE i < block.in DO
-    IF i MOD BytesPerLine = 0 THEN w.s("  "); w.x(i,4); w.s(": ") END;
-    w.x(block.bytes[i],2); w.c(" ");
-    IF i MOD BytesPerLine = BytesPerLine - 1 THEN w.l END;
-    INC(i)
-  END;
-  IF i MOD BytesPerLine # 0 THEN w.l END;
-
-  (* Interpreted dump *)
-  i := 0; WHILE i < block.in DO
-    addr := SYSTEM.ADR(block.bytes[i]);
-    a.SETPARAM(addr, SIZE(a.AtomHeader));
-    w.lc; DumpHeader(addr);
-    hdr  := a.ATOMPTR(addr);
-    i := hdr.data - SYSTEM.ADR(block.bytes);
-    a.AlignUp(i, SIZE(a.AtomHeader));
-  END;
-END DumpBlock;
-
-
-PROCEDURE DumpBlocks;
-VAR block: a.BlockPtr;
-BEGIN
-  block := a.Blocks;
-  WHILE block # NIL DO DumpBlock(block); block := block.next END
-END DumpBlocks;
 
 PROCEDURE CheckVariableUsages;
 VAR i: INTEGER; v: a.Value;
@@ -157,7 +128,7 @@ END CheckVariableUsages;
 
 (* ---------------------- Formatted list of all atoms --------------------- *)
 
-PROCEDURE AddList(l: a.Address);
+PROCEDURE AddList(l: a.Cell);
 VAR list: AtomList;  v: a.Value;
 BEGIN
   IF l # 0 THEN
@@ -180,7 +151,7 @@ BEGIN
   END
 END AddList;
 
-PROCEDURE NameList(link: a.Address): CHAR;
+PROCEDURE NameList(link: a.Cell): CHAR;
 VAR i: INTEGER;
 BEGIN
   FOR i := 0 TO 25 DO
@@ -189,7 +160,7 @@ BEGIN
   RETURN ' '
 END NameList;
 
-PROCEDURE ListList(link: a.Address);
+PROCEDURE ListList(link: a.Cell);
 VAR v: a.Value; inworkspace: BOOLEAN;
 BEGIN inworkspace := TRUE;
   w.c(NameList(link)); w.c(" ");

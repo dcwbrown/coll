@@ -5,19 +5,19 @@ IMPORT Files, w, a, SYSTEM;
 VAR
   BootState:  INTEGER;  (* 0 - normal, 1 - escaped, 2 - number *)
   BootNumber: INTEGER;
-  BootStack:  ARRAY 10 OF a.AtomPtr;
+  BootStack:  ARRAY 10 OF a.Atom;
   BootTop:    INTEGER;
 
 
-PROCEDURE AddAtom(VAR current: a.AtomPtr; data: a.Address);
+PROCEDURE AddAtom(VAR current: a.Atom; data: a.Cell);
 BEGIN
-  a.SETPTR(current.next, a.NewAtom());
-  current := a.ATOMPTR(current.next);
+  a.SETADDR(current.next, a.NewAtom());
+  current := a.ATOM(current.next);
   current.data := data
 END AddAtom;
 
-PROCEDURE AddChar(VAR current: a.AtomPtr;  ch: CHAR);
-VAR link: a.AtomPtr;
+PROCEDURE AddChar(VAR current: a.Atom;  ch: CHAR);
+VAR link: a.Atom;
 BEGIN
   IF (BootState = 2) & ((ch < '0') OR (ch > '9')) THEN
     AddAtom(current, BootNumber);
@@ -32,7 +32,7 @@ BEGIN
             link.next := a.Link;
             w.Assert(a.LINK(current.next) = 0, "Expected current.next to be at end of list in ']'.");
             current := link;
-            link := a.ATOMPTR(link.data);
+            link := a.ATOM(link.data);
       ELSE  AddAtom(current, ORD(ch))
       END
   |1: IF (ch >= '0') & (ch <= '9') THEN
@@ -49,8 +49,8 @@ BEGIN
 END AddChar;
 
 
-PROCEDURE Load*(fn: ARRAY OF CHAR): a.Address;
-VAR head, current, nest: a.AtomPtr;
+PROCEDURE Load*(fn: ARRAY OF CHAR): a.Cell;
+VAR head, current, nest: a.Atom;
     i:                   INTEGER;
     f:                   Files.File;
     r:                   Files.Rider;

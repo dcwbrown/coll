@@ -26,7 +26,8 @@ endif
 	voc -r -s -OC $^
 
 test$(XE): test.mod TextWriter.o w.o a.o
-test$(XE): bootstrap.o interpreter.o dumping.o
+test$(XE): bootstrap.o interpreter.o
+test$(XE): dumping.o reorganise.o
 test$(XE):
 	voc -r -M -OC test.mod
 	-./test$(XE)

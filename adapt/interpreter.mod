@@ -32,7 +32,7 @@ BEGIN
 END wvalue;
 
 
-PROCEDURE wlink(link: a.Address);
+PROCEDURE wlink*(link: a.Cell);
 VAR v: a.Value;
 BEGIN
   w.s("Link: "); w.x(link,1); w.sl(", value: ");
@@ -82,11 +82,11 @@ END DumpStack;
 
 (* ----------------------------- Interpreter ------------------------------ *)
 
-PROCEDURE BoolVal(b: BOOLEAN): a.Address;
+PROCEDURE BoolVal(b: BOOLEAN): a.Cell;
 BEGIN IF b THEN RETURN 1 ELSE RETURN 0 END END BoolVal;
 
 PROCEDURE Step*;
-VAR n, r1, r2: a.Value;  c: CHAR;  i: a.Address;
+VAR n, r1, r2: a.Value;  c: CHAR;  i: a.Cell;
 BEGIN
   w.Assert(a.IsLink(Program), "Step expects Program to be a link.");
   n := Program; a.Next(n);
@@ -103,9 +103,8 @@ BEGIN
                               "intrinsic variable blocked because arg stack is full.");
                        i := Program.data - ORD('a');
                        IF a.IntrinsicVariable[i] = 0 THEN
-                         a.IntrinsicVariable[i] := SYSTEM.VAL(a.Address, a.NewAtom())
+                         a.IntrinsicVariable[i] := SYSTEM.VAL(a.Cell, a.NewAtom())
                        END;
-                       a.CheckLink("Variable address operation", a.IntrinsicVariable[i]);
                        a.InitLink(Arg.stk[Arg.top], a.IntrinsicVariable[i]); INC(Arg.top)
                        (*w.s("Following initrinsic variable push, "); DumpStack(Arg); w.l*)
 
@@ -137,7 +136,7 @@ BEGIN
                          a.InitInt(Arg.stk[Arg.top-2], 0)
                        ELSIF a.IsLink(Arg.stk[Arg.top-1]) THEN
                          a.InitInt(Arg.stk[Arg.top-2],
-                                 BoolVal(Arg.stk[Arg.top-1].header = Arg.stk[Arg.top-2].header))
+                                 BoolVal(Arg.stk[Arg.top-1].atom = Arg.stk[Arg.top-2].atom))
                        ELSE
                          a.InitInt(Arg.stk[Arg.top-2],
                                  BoolVal(Arg.stk[Arg.top-1].data = Arg.stk[Arg.top-2].data))
