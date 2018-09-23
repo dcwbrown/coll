@@ -151,9 +151,7 @@ BEGIN
   w.Assert(IsLink(v), "Next expects reference that is a Link, not an Int.");
   IF v.next # 0 THEN ExpandValue(v.next, v)
   ELSIF ATOM(v.atom.next) = NIL THEN InitInt(v, 0)
-  ELSE
-    w.Assert((v.pos = 0) OR (PARAM(v.atom.next) = 0), "Invalid next link from storage to workspace in next.");
-    InitLink(v, v.atom.next)
+  ELSE InitLink(v, v.atom.next)
   END;
 END Next;
 
@@ -161,11 +159,7 @@ PROCEDURE Fetch*(VAR v: Value);
 BEGIN
   w.Assert(IsLink(v), "Fetch expects reference that is a Link, not an Int.");
   IF v.kind = Int THEN InitInt(v, v.data)
-  ELSE
-    IF (v.pos # 0) & (PARAM(v.data) = 0) THEN
-      w.Fail("Fetch link from storage block to workspace.")
-    END;
-    InitLink(v, v.data)
+  ELSE InitLink(v, v.data)
   END
 END Fetch;
 
@@ -220,4 +214,3 @@ END InitMemory;
 
 BEGIN InitMemory
 END a.
-

@@ -112,20 +112,6 @@ BEGIN
 END DumpHeader;
 
 
-PROCEDURE CheckVariableUsages;
-VAR i: INTEGER; v: a.Value;
-BEGIN
-  FOR i := 0 TO 25 DO
-    IF a.IntrinsicVariable[i] # 0 THEN
-      w.s("Intrinsic '"); w.u(ORD('a') + i); w.s("' ");
-      a.InitLink(v, a.IntrinsicVariable[i]);
-      DumpValue(v)
-    END
-  END
-END CheckVariableUsages;
-
-
-
 (* ---------------------- Formatted list of all atoms --------------------- *)
 
 PROCEDURE AddList(l: a.Cell);
