@@ -32,7 +32,8 @@ END wut;
 
 PROCEDURE u*(u: LONGINT);  (* Write Unicode codepoint as UTF-8 *)
 BEGIN
-  IF    u = 10      THEN l  (* LF *)
+  IF    u < 0       THEN s('^-'); x(-u,1)
+  ELSIF u = 10      THEN l  (* LF *)
   ELSIF u < 32      THEN c('^'); x(u,1)
   ELSIF u < 000080H THEN c(CHR(u))
   ELSIF u < 000800H THEN c(CHR(u DIV 00040H + 0C0H));  wut(u, 1)

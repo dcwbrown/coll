@@ -42,13 +42,14 @@ BEGIN
   w.sl("Usage at start:"); DumpStats;
 
   (* Load the bootstrap as intrinsic variable 'z'. *)
-  a.IntrinsicVariable[25] := bootstrap.Load("test.boot");
+  (*a.IntrinsicVariable[25] := bootstrap.Load("test.boot");*)
+  a.IntrinsicVariable[25] := bootstrap.Load("match.boot");
 
-  w.l; w.sl("Usage after bootstrap load:"); DumpStats;
+  (*w.l; w.sl("Usage after bootstrap load:"); DumpStats;*)
 
   reorganise.Collect;
 
-  w.l; w.sl("Usage after first collection:"); DumpStats;
+  (*w.l; w.sl("Usage after first collection:"); DumpStats;*)
 
   (* Run the bootstrap *)
   w.sl("Running bootstrap after first collection.");
@@ -59,6 +60,7 @@ BEGIN
 
   w.l; w.sl("Usage after bootstrap executed:"); DumpStats;
 
+  (*
   reorganise.Collect;
 
   w.l; w.sl("Usage after second collection:"); DumpStats;
@@ -82,6 +84,7 @@ BEGIN
   interpreter.DumpStack(interpreter.Arg);
 
   w.l; w.sl("Usage after third bootstrap run:"); DumpStats;
+  *)
 
 END test.
 

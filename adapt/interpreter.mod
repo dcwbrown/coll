@@ -53,7 +53,7 @@ END Dup;
 PROCEDURE Swap(VAR stk: ValueStack);
 VAR v: a.Value;
 BEGIN
-  w.Assert(stk.top > 1, "Swap requires at least two items on stk.");
+  w.Assert(stk.top > 1, "Swap requires at least two items on stack.");
   v := stk.stk[stk.top-2];
   stk.stk[stk.top-2] := stk.stk[stk.top-1];
   stk.stk[stk.top-1] := v
@@ -136,11 +136,18 @@ BEGIN
                          a.InitInt(Arg.stk[Arg.top-2], 0)
                        ELSIF a.IsLink(Arg.stk[Arg.top-1]) THEN
                          a.InitInt(Arg.stk[Arg.top-2],
-                                 BoolVal(Arg.stk[Arg.top-1].atom = Arg.stk[Arg.top-2].atom))
+                                   BoolVal(Arg.stk[Arg.top-1].atom = Arg.stk[Arg.top-2].atom))
                        ELSE
                          a.InitInt(Arg.stk[Arg.top-2],
-                                 BoolVal(Arg.stk[Arg.top-1].data = Arg.stk[Arg.top-2].data))
+                                   BoolVal(Arg.stk[Arg.top-1].data = Arg.stk[Arg.top-2].data))
                        END;
+                       DEC(Arg.top)
+
+    |'<':(* Lessthn *) w.Assert(Arg.top >= 2, "'=' operator requires 2 args.");
+                       w.Assert(~a.IsLink(Arg.stk[Arg.top-1]), "'<' requires 2nd arg to be integer.");
+                       w.Assert(~a.IsLink(Arg.stk[Arg.top-2]), "'<' requires 1st arg to be integer.");
+                       a.InitInt(Arg.stk[Arg.top-2],
+                                 BoolVal(Arg.stk[Arg.top-2].data < Arg.stk[Arg.top-1].data));
                        DEC(Arg.top)
 
     |'+':(* Plus    *) w.Assert(Arg.top >= 2, "'+' operator requires 2 args.");

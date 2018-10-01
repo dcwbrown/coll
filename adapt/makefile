@@ -28,6 +28,7 @@ endif
 test$(XE): test.mod TextWriter.o w.o a.o
 test$(XE): bootstrap.o interpreter.o
 test$(XE): dumping.o reorganise.o
+test$(XE): *.boot
 test$(XE):
 	voc -r -M -OC test.mod
 	-./test$(XE)
