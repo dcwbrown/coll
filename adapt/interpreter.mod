@@ -74,7 +74,10 @@ BEGIN
     w.Assert(stk.top >= 0, "Negative stack top index.");
     FOR i := 0 TO stk.top-1 DO
       w.s("  ["); w.i(i); w.s("] ");
-      wvalue(stk.stk[stk.top-1-i]); w.l;
+      IF a.IsLink(stk.stk[stk.top-1-i]) THEN w.c('['); w.nb END;
+      wvalue(stk.stk[stk.top-1-i]); 
+      IF a.IsLink(stk.stk[stk.top-1-i]) THEN w.c(']') END;
+      w.l
     END
   END
 END DumpStack;
@@ -167,10 +170,19 @@ BEGIN
                                BoolVal(a.Truth(Arg.stk[Arg.top-2]) & a.Truth(Arg.stk[Arg.top-1])));
                        DEC(Arg.top)
 
+    |'|':(* Or      *) w.Assert(Arg.top >= 2, "'|' operator requires 2 args.");
+                       a.InitInt(Arg.stk[Arg.top-2],
+                               BoolVal(a.Truth(Arg.stk[Arg.top-2]) OR a.Truth(Arg.stk[Arg.top-1])));
+                       DEC(Arg.top)
+
     (* Conditional *)
     |'?':(* If      *) w.Assert(Arg.top >= 2, "'?' operator requires 2 args.");
                        w.Assert(a.IsLink(Arg.stk[Arg.top-1]), "'?' requires link on TOS.");
-                       IF a.Truth(Arg.stk[Arg.top-2]) THEN n := Arg.stk[Arg.top-1] END;
+                       IF a.Truth(Arg.stk[Arg.top-2]) THEN 
+                         n := Arg.stk[Arg.top-1]; 
+                         Return.stk[Return.top-1] := n; (* maintain top of return stack as 
+                                                           start of currently executing list *)
+                       END;
                        DEC(Arg.top, 2)
 
     |'@':(* Start   *) w.Assert(Arg.top < StackDepth, "'@' blocked because arg stack is full.");

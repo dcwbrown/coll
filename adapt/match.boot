@@ -3,101 +3,136 @@ L
 [------------]WL
 
 
-[Variables:
-  p - current position in pattern
-  c - current position in input
-  t - type of current pattern
+[ Functions:
+    s - Setup match
+    m - match one pattern position
+    i - handle int in pattern
+    l - handle link in pattern
+    a - advance pattern
+    b - backtrack
+    e - succeeding backtrack
+    f - failing backtrack
 
- Functions:
-  b - beginning of pattern
-  m - match one pattern position
-  i - handle int in pattern
-  l - handle link in pattern
-  a - advance pattern
-  s - succeeding backtrack
-  f - failing backtrack
+  Variables:
+    p - current position in pattern
+    c - current position in input
+    t - type of current pattern
+
+  Common state on stack:
+    if no prev (enclosing) pattern, -1
+    else
+      if prev pattern is sequence:      prev-pat-pos prev-pat-type
+      if prev pattern is alternatives:  prev-pat-pos prev-input-pos prev-pat-type
 ]#
 
+[d: Debug dump match status.]#
+[W  [. c ']W c.W [', p ']W p.W [', t ]W t.`0+W [, TOS ]W "W [.]WL]d:
 
-[p.. `/=t: p.,p:]b:
 
+[s: setup match
+    entry  p -> first (type) char of pattern
+           c -> first char of key string 
+    exit   p    advanced over type char
+           t    false iff sequence pattern
+                true iff alternates pattern
+]#
+[p.. `/=t: p.,p:]s:
+
+[m: match step]#
 [p.._ [l.!]? i.!]m:
 
-[ p.. c.. =        [Compare pattern and input]#
-  ["[c.,c:]?]!     [Advance input if match]#
-  t.= [x.!]? a.!   [Backtrack or advance pattern]#
+[i: match integer value]#
+[ [Match integer value. ]W
+  p.. c.. =           [Compare pattern and input]#
+  ["[[matched]]?[mismatched]]!WL
+  ["[c.,c:]?]!        [Advance input if match]#
+  t.= [t. b.!]? a.!   [Backtrack or advance pattern]#
 ]i:
 
-[ "0< [#03- t.+]?    [If finished leave TOS as -2/-3]#
-  t.[s.!]?f.!
-]x:
-
-[ p..           [Push link to current position in pattern]#
+[l: match link value]#
+[ [Match link value. ]W S
+  p.            [Push link to current position in pattern]#
   [t.[c.]?]!    [Push input position when alt pattern]#
   t.            [Push type (seq/alt)]#
-  p...p:        [Position to start of nested list]#
-  b.!           [Process beginning of pattern]#
+  p..p:         [Position to start of nested list]#
+  s.!           [Process beginning of pattern]#
 ]l:
 
-[ p.," [p:]? #     [If there's a next, just follow it]#
-  t. [f.!]? s.!    [backtrack alt->failing, seq->succeeding]#
+[a: advance pattern]#
+[ [Advance.]WL
+  p.," [p:]? #  [If there's a next, just follow it]#
+  t.~ b.!       [If no next, EOL => success for seq, failure for alt]#
 ]a:
 
-["0< [#02-]?       [If finished leave TOS as -2]#
- "t:               [Restore enclosing pattern type]#
- [
-  [Successful backtrack to alt pattern]#
-  #      [Drop saved input position]#
-  p:     [Restore position in enclosing pattern]
-  s.!    [Continue successful backtrack in enclosing pattern]#
- ]?
-  [Successful backtrack to seq pattern]#
-  p:     [Restore position in enclosing pattern]
-  a.!    [Advance in enclosing pattern]#
-]s:
+[ Backtrack:
+  Successful backtrack is when reaching end of sequence
+                       or when value matches in alternatives
+  Failing backtrack    is when reaching end of alternatives
+                       or when value doesn't match in sequence 
+]#
 
-["0< [#03-]?      [If finished leave TOS as -3]#
- "t:              [Restore enclosing pattern type]#
- [
-  [Successful backtrack to alt pattern]#
-  c:     [Restore saved input position]#
-  p:     [Restore position in enclosing pattern]
-  a.!    [Advance in enclosing pattern]#
- ]?
-  [Successful backtrack to seq pattern]#
-  #      [Drop position in enclosing pattern]
-  f.!    [Continue failing backtrack in enclosing pattern]#
-]f:
+[ b: backtrack pattern ( .. (prev-pat-type|-1) success --) ]#
+[ 
+  [Backtrack 1]d.! [t ]W tW [ ]WS
+
+  %"t:        [Restore enclosing pattern type]#
+
+  [Backtrack 2 t ]W tW [ ]WS
+
+  0< [2+]?    [If finished leave TOS as 2 (fail) or 3 (success) ]#
+
+  [Stack holds success, t holds prev pattern type.]#
+
+  [Backtrack 3 t ]W tW [ ]WS
+
+  [If prev pat was alternates, handle stacked input pos:
+    success -> drop, fail -> restore.]#
+  [t.[  "[%#]?%c:  ]?]! 
+
+  [Backtrack 4 t ]W tW [ ]WS
+
+  [If failing to seq pattern leave p untouched, so if 
+   we backtrack all the way out we'll see how deep we got.
+   In all other cases, restore it.]#
+  ["t.|[%p:]?%#]!
+  
+  [Backtrack 5 t ]W tW [ ]WS
+
+  [If successful backtrack to seq, or failing backtrack to 
+    alt, advance pattern and exit.
+    Otherwise continue backtracking.]#
+
+  "t.=~[#a.!]? b.!
+
+  [Backtrack 6 t ]W tW [ ]WS
+]b:
 
 
 [Individual function tests.]#
 
 
-[Debug dump match status.]#
-[W  [. p ']W p.W [', c ']W c.W [', t ]W t.`0+W [, TOS ]W "W [.]WL]d:
-
-[Match test. (pattern string)]#
-[ c: p: 0t: 01-
+[Match test. (string pattern)]#
+[ p: c: 0t: 01-
   [Before begin-match]d.!
-  b.!
+  s.!
   [After begin-match]d.!
-  [ m.! [After match]d.! " 1+0<~@? 3+]!
+  [ m.! [After match]d.! " 2<@? 2-]!
   [Match test complete, ]W S # L
 ]y:
-
-[ sequin] [sequin] y.!
-[ sequence] [sequin] y.!
 
 
 
 [
-  1 [Fred] ['Fred] t.!
-  0 [Fred] ['Bert] t.!
-  0 [Frip] ['Fred] t.!
-  1 [t]    [/tuv] t.!
-  1 [t]    [/rst] t.!
-  0 [t]    [/abc] t.!
-  1 [test] ['te['s]t] t.!
-  1 [fred] [/['bert]['fred]['harry]] t.!
-  1 [fred] ['fr[/aeiou]d] t.!
+[sequin] [ sequin]   y.!
+[sequin] [ sequence] y.!
+[fred]   [ sequence] y.!
+[t]      [/tuv]      y.!
+[u]      [/tuv]      y.!
+[v]      [/tuv]      y.!
+[w]      [/tuv]      y.!
+[test]   [ te[ s]t]  y.!
+[fred]   [/['bert]['fred]['harry]] y.!
+[fred]   ['fr[/aeiou]d] y.!
 ]#
+
+[tes]   [ te[ s]t]  y.!

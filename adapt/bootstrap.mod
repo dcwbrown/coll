@@ -5,6 +5,7 @@ IMPORT Files, w, a, SYSTEM;
 VAR
   BootState:  INTEGER;  (* 0 - normal, 1 - escaped, 2 - number *)
   BootNumber: INTEGER;
+  BootNeg:    BOOLEAN;
   BootStack:  ARRAY 10 OF a.Atom;
   BootTop:    INTEGER;
 
@@ -20,12 +21,13 @@ PROCEDURE AddChar(VAR current: a.Atom;  ch: CHAR);
 VAR link: a.Atom;
 BEGIN
   IF (BootState = 2) & ((ch < '0') OR (ch > '9')) THEN
+    IF BootNeg THEN BootNumber := -BootNumber END; 
     AddAtom(current, BootNumber);
     BootState := 0;
   END;
   CASE BootState OF
   |0: CASE ch OF
-      |'^': BootState := 1;
+      |'^': BootState := 1
       |'[': AddAtom(current, 0);  BootStack[BootTop] := current;  INC(BootTop);
       |']': DEC(BootTop);  link := BootStack[BootTop];
             link.data := a.LINK(link.next);
@@ -35,11 +37,14 @@ BEGIN
             link := a.ATOM(link.data);
       ELSE  AddAtom(current, ORD(ch))
       END
-  |1: IF (ch >= '0') & (ch <= '9') THEN
-        BootNumber := ORD(ch) - ORD('0');
+  |1: IF ch = '-' THEN 
+        BootNumber := 0; BootNeg := TRUE; BootState := 2; 
+        w.sl("Boot negatve escaped number.")
+      ELSIF (ch >= '0') & (ch <= '9') THEN
+        BootNumber := ORD(ch) - ORD('0'); BootNeg := FALSE; BootState := 2;
         w.s("Boot escaped number. First digit "); w.i(BootNumber); w.l;
-        BootState := 2;
       ELSE
+        (* '^' not followed by '-' or digit. *)
         AddAtom(current, ORD(ch));
         BootState := 0
       END
