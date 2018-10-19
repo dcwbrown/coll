@@ -15,16 +15,8 @@ VAR
 
 (* --------------------------------- Values --------------------------------- *)
 
+(*
 PROCEDURE^ DumpHeader*(addr: a.Cell);
-
-PROCEDURE wkind*(k: a.Cell);
-BEGIN CASE k OF
-  |a.Int:  w.s("Int")
-  |a.Link: w.s("Link")
-  |a.Flat: w.s("Flat")
-  ELSE     w.s("invalid<"); w.i(k); w.c('>')
-  END
-END wkind;
 
 PROCEDURE DumpValue*(v: a.Value);
 VAR link: a.Cell;
@@ -50,10 +42,12 @@ BEGIN
     DumpHeader(link)
   END;
 END DumpValue;
+*)
 
 
 (* --------------------------- Regroup debugging ---------------------------- *)
 
+(*
 PROCEDURE whexbytes*(buf: ARRAY OF a.Int8; len: a.Cell);
 VAR i: a.Cell;
 BEGIN
@@ -110,19 +104,21 @@ BEGIN
   END;
   w.sl("'.");
 END DumpHeader;
+*)
 
 
 (* ---------------------- Formatted list of all atoms --------------------- *)
 
+(*
 PROCEDURE AddList(l: a.Cell);
 VAR list: AtomList;  v: a.Value;
 BEGIN
   IF l # 0 THEN
-    list := Lists;  (* Check first whether this list is already recorded *)
+    list := Lists;  ( * Check first whether this list is already recorded * )
     WHILE (list # NIL) & (list.atom # l) DO list := list.next END;
 
     IF list = NIL THEN
-      (* List is not already recorded, add it. *)
+      ( * List is not already recorded, add it. * )
       NEW(list);
       list.atom := l;
 
@@ -181,7 +177,7 @@ BEGIN
   l := Lists;
   WHILE l # NIL DO ListList(l.atom); l := l.next END
 END ListAll;
-
+*)
 
 
 

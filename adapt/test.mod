@@ -47,16 +47,25 @@ BEGIN
 
   (*w.l; w.sl("Usage after bootstrap load:"); DumpStats;*)
 
+  (* Run the bootstrap *)
+  w.sl("Running bootstrap before first collection.");
+  interpreter.ProgramLink := a.IntrinsicVariable[25];
+  WHILE a.ADDR(interpreter.ProgramLink) # 0 DO interpreter.Step END;
+  w.lc; w.s("Bootstrap complete, ");
+  interpreter.DumpStack(interpreter.ArgStack);
+
+  w.l; w.sl("Usage after bootstrap executed:"); DumpStats;
+
   reorganise.Collect;
 
   (*w.l; w.sl("Usage after first collection:"); DumpStats;*)
 
   (* Run the bootstrap *)
   w.sl("Running bootstrap after first collection.");
-  a.InitLink(interpreter.Program, a.IntrinsicVariable[25]);
-  WHILE a.IsLink(interpreter.Program) DO interpreter.Step END;
+  interpreter.ProgramLink := a.IntrinsicVariable[25];
+  WHILE a.ADDR(interpreter.ProgramLink) # 0 DO interpreter.Step END;
   w.lc; w.s("Bootstrap complete, ");
-  interpreter.DumpStack(interpreter.Arg);
+  interpreter.DumpStack(interpreter.ArgStack);
 
   w.l; w.sl("Usage after bootstrap executed:"); DumpStats;
 

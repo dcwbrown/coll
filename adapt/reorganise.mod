@@ -81,7 +81,7 @@ BEGIN
 
   IF a.KIND(first) # a.Int THEN
     w.s("StackRun passed non-Int kind atom:");
-    dumping.DumpHeader(SYSTEM.ADR(first^));
+    (*dumping.DumpHeader(SYSTEM.ADR(first^));*)
   END;
   w.Assert(a.KIND(first) = a.Int, "StackRun passed non-Int kind atom.");
 
@@ -120,7 +120,7 @@ BEGIN
   addr  := atom.data MOD 10000000000000H;
   limit := addr + a.PARAM(atom.data);
   WHILE addr < limit DO
-    a.Expand(addr, data);
+    a.ExpandFlatValue(addr, data);
     IF data < 32 THEN w.c('<'); w.i(data); w.c('>'); w.nb ELSE w.u(data) END
   END;
   w.Assert(addr = limit, "Flat atom content did not end exactly at limit.");

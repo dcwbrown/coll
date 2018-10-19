@@ -31,7 +31,7 @@ L
 
 [s: setup match
     entry  p -> first (type) char of pattern
-           c -> first char of key string 
+           c -> first char of key string
     exit   p    advanced over type char
            t    false iff sequence pattern
                 true iff alternates pattern
@@ -68,11 +68,11 @@ L
   Successful backtrack is when reaching end of sequence
                        or when value matches in alternatives
   Failing backtrack    is when reaching end of alternatives
-                       or when value doesn't match in sequence 
+                       or when value doesn't match in sequence
 ]#
 
 [ b: backtrack pattern ( .. (prev-pat-type|-1) success --) ]#
-[ 
+[
   [Backtrack 1]d.! [t ]W tW [ ]WS
 
   %"t:        [Restore enclosing pattern type]#
@@ -87,18 +87,18 @@ L
 
   [If prev pat was alternates, handle stacked input pos:
     success -> drop, fail -> restore.]#
-  [t.[  "[%#]?%c:  ]?]! 
+  [t.[  "[%#]?%c:  ]?]!
 
   [Backtrack 4 t ]W tW [ ]WS
 
-  [If failing to seq pattern leave p untouched, so if 
+  [If failing to seq pattern leave p untouched, so if
    we backtrack all the way out we'll see how deep we got.
    In all other cases, restore it.]#
   ["t.|[%p:]?%#]!
-  
+
   [Backtrack 5 t ]W tW [ ]WS
 
-  [If successful backtrack to seq, or failing backtrack to 
+  [If successful backtrack to seq, or failing backtrack to
     alt, advance pattern and exit.
     Otherwise continue backtracking.]#
 
@@ -116,6 +116,7 @@ L
   [Before begin-match]d.!
   s.!
   [After begin-match]d.!
+  S
   [ m.! [After match]d.! " 2<@? 2-]!
   [Match test complete, ]W S # L
 ]y:

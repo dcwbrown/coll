@@ -2,85 +2,163 @@ MODULE interpreter;  (* interpreter - data, algorithms and memory *)
 
 IMPORT w, a, In, SYSTEM;
 
+
 CONST
   StackDepth = 100;
 
-TYPE
-  ValueStack = RECORD
-    stk: ARRAY StackDepth OF a.Value;
-    top: INTEGER
-  END;
 
 VAR
-  Arg*:     ValueStack;
-  Return*:  ValueStack;
-  Program*: a.Value;
+  ArgStack*:     a.Cell;  (* Argument stack *)
+  ReturnStack*:  a.Cell;  (* Function return stack *)
+  ProgramLink*:  a.Cell;  (* Currently executing program *)
 
 
-PROCEDURE wvalue(v: a.Value);
-VAR l: a.Value;
+PROCEDURE wList*(link: a.Cell);
+VAR data, next: a.Cell;
 BEGIN
-  IF ~a.IsLink(v) THEN
-    w.u(v.data)
+  WHILE a.ADDR(link) # 0 DO
+    a.FetchAtom(link, data, next);
+    IF next MOD 4 = a.Int THEN
+      w.u(data)
+    ELSE
+      w.c('['); wList(data); w.c(']')
+    END;
+    link := next
+  END;
+END wList;
+
+
+PROCEDURE wValue*(atom: a.Atom);
+BEGIN
+  w.Assert(a.KIND(atom) < a.Flat, "wValue unexpectedly passed flat atom.");
+  IF a.KIND(atom) = a.Int THEN
+    w.u(atom.data)
   ELSE
-    WHILE a.IsLink(v) DO
-      IF v.kind = a.Int THEN w.u(v.data)
-      ELSE w.c('['); l := v; a.Fetch(l); wvalue(l); w.c(']') END;
-      a.Next(v)
-    END
+    wList(atom.data)
   END
-END wvalue;
+END wValue;
 
 
-PROCEDURE wlink*(link: a.Cell);
-VAR v: a.Value;
+PROCEDURE wKind*(cell: a.Cell);
 BEGIN
-  w.s("Link: "); w.x(link,1); w.sl(", value: ");
-  a.InitLink(v, link); wvalue(v)
-END wlink;
+  CASE cell MOD 4 OF
+  |a.Int:  w.s("Int")
+  |a.Link: w.s("Link")
+  |a.Flat: w.s("Flat")
+  ELSE     w.s("invalid<"); w.x(cell,1); w.c('>')
+  END
+END wKind;
 
 
 (* -------------------------------- Stacks -------------------------------- *)
 
-PROCEDURE Dup(VAR stk: ValueStack);
+PROCEDURE Dup*(VAR stack: a.Cell);
+VAR atom: a.Atom;
 BEGIN
-  w.Assert(stk.top > 0, "Cannot dup empty stk.");
-  w.Assert(stk.top < LEN(stk.stk), "Cannot up full stk.");
-  stk.stk[stk.top] := stk.stk[stk.top-1];
-  INC(stk.top)
+  w.Assert(a.KIND(a.ATOM(stack)) < a.Flat, "Dup of flat atom not allowed.");
+  atom := a.NewAtom();
+  atom.next := stack;
+  a.FetchValue(stack, atom);
+  stack := SYSTEM.VAL(a.Cell, atom)
 END Dup;
 
-PROCEDURE Swap(VAR stk: ValueStack);
-VAR v: a.Value;
+
+PROCEDURE Swap*(VAR stack: a.Cell);
+VAR a1, a2: a.Atom;
 BEGIN
-  w.Assert(stk.top > 1, "Swap requires at least two items on stack.");
-  v := stk.stk[stk.top-2];
-  stk.stk[stk.top-2] := stk.stk[stk.top-1];
-  stk.stk[stk.top-1] := v
+  a1 := a.ATOM(stack);
+  w.Assert(a.KIND(a1) < a.Flat, "Swap of flat atom not allowed.");
+  w.Assert(a.ATOM(a1.next) # NIL, "Swap requires at least two items on stack.");
+  a2 := a.ATOM(a2.next);
+  w.Assert(a.KIND(a2) < a.Flat, "Swap of flat atom not allowed.");
+  a.SETLINK(a1.next, a.LINK(a2.next));
+  a.SETLINK(a2.next, SYSTEM.VAL(a.Cell, a1));
+  stack := SYSTEM.VAL(a.Cell, a2)
 END Swap;
 
-PROCEDURE Drop(VAR stk: ValueStack);
+PROCEDURE Drop*(VAR stack: a.Cell);
+VAR atom: a.Atom;
 BEGIN
-  w.Assert(stk.top > 0, "Cannot drop from empty stk.");
-  DEC(stk.top)
+  atom := a.ATOM(stack);
+  w.Assert(atom # NIL, "Drop called with empty stack.");
+  w.Assert(a.KIND(atom) < a.Flat, "Drop of flat atom not allowed.");
+  stack := a.LINK(atom.next)
 END Drop;
 
-PROCEDURE DumpStack*(VAR stk: ValueStack);
-VAR i: INTEGER;
+PROCEDURE DumpStack*(stack: a.Cell);
+VAR i: INTEGER;  data, next: a.Cell;
 BEGIN
-  (* Dump any remaining stack content *)
-  IF stk.top = 0 THEN w.sl("stack empty.")
-  ELSE w.sl("stack content:");
-    w.Assert(stk.top >= 0, "Negative stack top index.");
-    FOR i := 0 TO stk.top-1 DO
+  IF a.ADDR(stack) = 0 THEN w.sl("stack empty.")
+  ELSE
+    i := 0;
+    w.sl("stack content:");
+    WHILE a.ADDR(stack) # 0 DO
       w.s("  ["); w.i(i); w.s("] ");
-      IF a.IsLink(stk.stk[stk.top-1-i]) THEN w.c('['); w.nb END;
-      wvalue(stk.stk[stk.top-1-i]); 
-      IF a.IsLink(stk.stk[stk.top-1-i]) THEN w.c(']') END;
-      w.l
+      a.FetchAtom(stack, data, next);
+      IF next MOD 4 >= a.Flat THEN
+        w.sl(" kind > 1 (not dumping content).");
+      ELSIF next MOD 4 = a.Int THEN
+        w.s(" Int:  "); w.i(data); w.s(", '"); w.u(data); w.sl("'.")
+      ELSE
+        w.s(" Link: "); wList(data)
+      END;
+      INC(i);
+      stack := a.LINK(next)
     END
   END
 END DumpStack;
+
+PROCEDURE PushData(VAR stack: a.Cell; data: a.Cell);
+VAR top: a.Atom;
+BEGIN
+  top := a.NewAtom();  top.data := data;
+  a.SETLINK(top.next, stack);  stack := SYSTEM.VAL(a.Cell, top)
+END PushData;
+
+PROCEDURE PushLink(VAR stack: a.Cell; link: a.Cell);
+BEGIN
+  PushData(stack, link);  a.SETKIND(a.ATOM(stack), a.Link)
+END PushLink;
+
+PROCEDURE PushInt(VAR stack: a.Cell; int: a.Cell);
+BEGIN
+  PushData(stack, int);  a.SETKIND(a.ATOM(stack), a.Int)
+END PushInt;
+
+PROCEDURE Top1(stack: a.Cell; VAR atom: a.Atom; id: CHAR);
+CONST debug = FALSE;
+BEGIN
+  atom := a.ATOM(stack);
+  IF atom = NIL THEN w.lc; w.s("Assertion failure: '"); w.c(id);
+                     w.sl("'' operator requires 1 arg but stack empty.") END;
+
+  IF debug THEN
+    w.lc; w.s("Top1 stack link to "); w.x(stack, 1); w.l;
+    w.s("  atom.next "); w.x(atom.next,16); w.l;
+    w.s("  atom.data "); w.x(atom.data,16); w.l;
+  END;
+
+END Top1;
+
+PROCEDURE Top2(stack: a.Cell; VAR a1, a2: a.Atom; id: CHAR);
+CONST debug = FALSE;
+BEGIN
+  a2 := a.ATOM(stack);
+  IF a2 = NIL THEN w.lc; w.s("Assertion failure: '"); w.c(id);
+                   w.sl("'' operator requires 2 args but stack empty.") END;
+  a1 := a.ATOM(a2.next);
+  IF a1 = NIL THEN w.lc; w.s("Assertion failure: '"); w.c(id);
+                   w.sl("'' operator requires 2 args but stack has only one.") END;
+
+  IF debug THEN
+    w.lc; w.s("Top2 stack link to "); w.x(stack, 1); w.l;
+    w.s("  a1.next "); w.x(a1.next,16); w.l;
+    w.s("  a1.data "); w.x(a1.data,16); w.l;
+    w.s("  a2.next "); w.x(a2.next,16); w.l;
+    w.s("  a2.data "); w.x(a2.data,16); w.l;
+  END;
+
+END Top2;
 
 
 (* ----------------------------- Interpreter ------------------------------ *)
@@ -89,155 +167,163 @@ PROCEDURE BoolVal(b: BOOLEAN): a.Cell;
 BEGIN IF b THEN RETURN 1 ELSE RETURN 0 END END BoolVal;
 
 PROCEDURE Step*;
-VAR n, r1, r2: a.Value;  c: CHAR;  i: a.Cell;
+CONST debug = FALSE;
+VAR data, next, nextdata, nextnext, i: a.Cell; c: CHAR;
+  a1, a2, r: a.Atom;
 BEGIN
-  w.Assert(a.IsLink(Program), "Step expects Program to be a link.");
-  n := Program; a.Next(n);
-  IF Program.kind = a.Int THEN
-    (*
-    IF Program.data > 32 THEN w.s("Intrinsic '"); w.u(Program.data); w.sl("'.") END;
-    IF Program.data > 32 THEN w.u(Program.data); w.fl END;
-    *)
-    CASE CHR(Program.data) OF
+  a.FetchAtom(ProgramLink, data, next);
+  IF next MOD 4 = a.Int THEN
+
+    IF debug THEN
+      w.lc;
+      IF data > 32 THEN w.s("Intrinsic '"); w.u(data); w.sl("'.") END;
+      (*IF data > 32 THEN w.u(data); w.fl END;*)
+    END;
+
+    CASE CHR(data) OF
     |' ', 0AX, 0DX: (* No op   *)
 
     (* Intrinsic global variables a..z and integer literals 0..F *)
-    |'a'..'z':         w.Assert(Arg.top < StackDepth,
-                              "intrinsic variable blocked because arg stack is full.");
-                       i := Program.data - ORD('a');
+    |'a'..'z':         i := data - ORD('a');
                        IF a.IntrinsicVariable[i] = 0 THEN
                          a.IntrinsicVariable[i] := SYSTEM.VAL(a.Cell, a.NewAtom())
                        END;
-                       a.InitLink(Arg.stk[Arg.top], a.IntrinsicVariable[i]); INC(Arg.top)
+                       PushLink(ArgStack, a.IntrinsicVariable[i]);
                        (*w.s("Following initrinsic variable push, "); DumpStack(Arg); w.l*)
 
-    |'0'..'9':         w.Assert(Arg.top < StackDepth,
-                              "Intrinsic literal blocked because arg stack is full.");
-                       INC(Arg.top); a.InitInt(Arg.stk[Arg.top-1], Program.data - ORD('0'))
+    |'0'..'9':         PushInt(ArgStack, data - ORD('0'))
+    |'A'..'F':         PushInt(ArgStack, data - ORD('A') + 10)
 
-    |'A'..'F':         w.Assert(Arg.top < StackDepth,
-                              "Intrinsic literal blocked because arg stack is full.");
-                       INC(Arg.top); a.InitInt(Arg.stk[Arg.top-1], Program.data - ORD('A') + 10)
-
-    |'`':              w.Assert(Arg.top < StackDepth,
-                              "'`' literal blocked because arg stack is full.");
-                       w.Assert(n.kind = a.Int, "'`' expected a.Int.");
-                       INC(Arg.top); a.InitInt(Arg.stk[Arg.top-1], n.data);
-                       a.Next(n)
+    |'`':              a.FetchAtom(next, nextdata, nextnext);
+                       w.Assert(nextnext MOD 4 = a.Int, "'`' expected a.Int.");
+                       PushInt(ArgStack, nextdata);
+                       next := nextnext
 
     (* Stack manipulation *)
-    |'"':(* Dup     *) Dup(Arg);
-    |'%':(* Swap    *) Swap(Arg);
-    |'#':(* Drop    *) Drop(Arg);
+    |'"':(* Dup     *) Dup(ArgStack);
+    |'%':(* Swap    *) Swap(ArgStack);
+    |'#':(* Drop    *) Drop(ArgStack);
 
     (* Basic operations *)
-    |'~':(* Not     *) w.Assert(Arg.top >= 1, "'~' operator requires 1 arg.");
-                       a.InitInt(Arg.stk[Arg.top-1], BoolVal(~a.Truth(Arg.stk[Arg.top-1])))
+    |'~':(* Not     *) Top1(ArgStack, a1, CHR(data));
+                       a1.data := BoolVal(a1.data # 0);
+                       a.SETKIND(a1, a.Int);
 
-    |'=':(* Equal   *) w.Assert(Arg.top >= 2, "'=' operator requires 2 args.");
-                       IF a.IsLink(Arg.stk[Arg.top-1]) # a.IsLink(Arg.stk[Arg.top-2]) THEN
-                         a.InitInt(Arg.stk[Arg.top-2], 0)
-                       ELSIF a.IsLink(Arg.stk[Arg.top-1]) THEN
-                         a.InitInt(Arg.stk[Arg.top-2],
-                                   BoolVal(Arg.stk[Arg.top-1].atom = Arg.stk[Arg.top-2].atom))
+    |'=':(* Equal   *) Top2(ArgStack, a1, a2, CHR(data));
+                       IF a.KIND(a1) # a.KIND(a2) THEN
+                         a1.data := 0
                        ELSE
-                         a.InitInt(Arg.stk[Arg.top-2],
-                                   BoolVal(Arg.stk[Arg.top-1].data = Arg.stk[Arg.top-2].data))
+                         a1.data := BoolVal(a1.data = a2.data)
                        END;
-                       DEC(Arg.top)
+                       a.SETKIND(a1, a.Int);
+                       Drop(ArgStack)
 
-    |'<':(* Lessthn *) w.Assert(Arg.top >= 2, "'=' operator requires 2 args.");
-                       w.Assert(~a.IsLink(Arg.stk[Arg.top-1]), "'<' requires 2nd arg to be integer.");
-                       w.Assert(~a.IsLink(Arg.stk[Arg.top-2]), "'<' requires 1st arg to be integer.");
-                       a.InitInt(Arg.stk[Arg.top-2],
-                                 BoolVal(Arg.stk[Arg.top-2].data < Arg.stk[Arg.top-1].data));
-                       DEC(Arg.top)
+    |'<':(* Lessthn *) Top2(ArgStack, a1, a2, CHR(data));
+                       w.Assert(a.KIND(a1) = a.Int, "'<' requires 1st arg to be integer.");
+                       w.Assert(a.KIND(a2) = a.Int, "'<' requires 2nd arg to be integer.");
+                       a1.data := BoolVal(a1.data < a2.data);
+                       a.SETKIND(a1, a.Int);
+                       Drop(ArgStack)
 
-    |'+':(* Plus    *) w.Assert(Arg.top >= 2, "'+' operator requires 2 args.");
-                       w.Assert(~a.IsLink(Arg.stk[Arg.top-1]), "'+' requires 2nd arg to be integer.");
-                       w.Assert(~a.IsLink(Arg.stk[Arg.top-2]), "'+' requires 1st arg to be integer.");
-                       a.InitInt(Arg.stk[Arg.top-2], Arg.stk[Arg.top-2].data + Arg.stk[Arg.top-1].data);
-                       DEC(Arg.top)
+    |'+':(* Plus    *) Top2(ArgStack, a1, a2, CHR(data));
+                       w.Assert(a.KIND(a1) = a.Int, "'+' requires 1st arg to be integer.");
+                       w.Assert(a.KIND(a2) = a.Int, "'+' requires 2nd arg to be integer.");
+                       a1.data := a1.data + a2.data;
+                       Drop(ArgStack)
 
-    |'-':(* Minus   *) w.Assert(Arg.top >= 2, "'-' operator requires 2 args.");
-                       w.Assert(~a.IsLink(Arg.stk[Arg.top-1]), "'-' requires 2nd arg to be integer.");
-                       w.Assert(~a.IsLink(Arg.stk[Arg.top-2]), "'-' requires 1st arg to be integer.");
-                       a.InitInt(Arg.stk[Arg.top-2], Arg.stk[Arg.top-2].data - Arg.stk[Arg.top-1].data);
-                       DEC(Arg.top)
+    |'-':(* Minus   *) Top2(ArgStack, a1, a2, CHR(data));
+                       w.Assert(a.KIND(a1) = a.Int, "'-' requires 1st arg to be integer.");
+                       w.Assert(a.KIND(a2) = a.Int, "'-' requires 2nd arg to be integer.");
+                       a1.data := a1.data - a2.data;
+                       Drop(ArgStack)
 
-    |'&':(* And     *) w.Assert(Arg.top >= 2, "'&' operator requires 2 args.");
-                       a.InitInt(Arg.stk[Arg.top-2],
-                               BoolVal(a.Truth(Arg.stk[Arg.top-2]) & a.Truth(Arg.stk[Arg.top-1])));
-                       DEC(Arg.top)
+    |'&':(* And     *) Top2(ArgStack, a1, a2, CHR(data));
+                       a1.data := BoolVal((a1.data # 0) & (a2.data # 0));
+                       a.SETKIND(a1, a.Int);
+                       Drop(ArgStack)
 
-    |'|':(* Or      *) w.Assert(Arg.top >= 2, "'|' operator requires 2 args.");
-                       a.InitInt(Arg.stk[Arg.top-2],
-                               BoolVal(a.Truth(Arg.stk[Arg.top-2]) OR a.Truth(Arg.stk[Arg.top-1])));
-                       DEC(Arg.top)
+    |'|':(* Or      *) Top2(ArgStack, a1, a2, CHR(data));
+                       a1.data := BoolVal((a1.data # 0) OR (a2.data # 0));
+                       a.SETKIND(a1, a.Int);
+                       Drop(ArgStack)
 
     (* Conditional *)
-    |'?':(* If      *) w.Assert(Arg.top >= 2, "'?' operator requires 2 args.");
-                       w.Assert(a.IsLink(Arg.stk[Arg.top-1]), "'?' requires link on TOS.");
-                       IF a.Truth(Arg.stk[Arg.top-2]) THEN 
-                         n := Arg.stk[Arg.top-1]; 
-                         Return.stk[Return.top-1] := n; (* maintain top of return stack as 
-                                                           start of currently executing list *)
+    |'?':(* If      *) Top2(ArgStack, a1, a2, CHR(data));
+                       w.Assert(a.KIND(a2) = a.Link, "'?' requires link on TOS.");
+                       IF a1.data # 0 THEN
+                         next := a2.data;
+                         r := a.ATOM(ReturnStack);
+                         w.Assert(r # NIL, "'?' operator requires non-empty return stack.");
+                         r.data := next;           (* maintain top of return stack as *)
+                         a.SETKIND(r, a.Link)      (* start of currently executing list *)
                        END;
-                       DEC(Arg.top, 2)
+                       Drop(ArgStack); Drop(ArgStack)
 
-    |'@':(* Start   *) w.Assert(Arg.top < StackDepth, "'@' blocked because arg stack is full.");
-                       w.Assert(Return.top > 0, "'@' reqires at least one entry on return stack.");
-                       INC(Arg.top);
-                       Arg.stk[Arg.top-1] := Return.stk[Return.top-1]
+    |'@':(* Start   *) r := a.ATOM(ReturnStack);
+                       w.Assert(r # NIL, "'@' operator requires non-empty return stack.");
+                       w.Assert(a.KIND(r) = a.Link, "'@' operator requires link on top of return stack");
+                       PushLink(ArgStack, r.data)
+
 
     (* Atom access *)
-    |'_':(* a.IsLink  *) w.Assert(Arg.top >= 1, "'_' operator requires 1 arg.");
-                       a.InitInt(Arg.stk[Arg.top-1], BoolVal(a.IsLink(Arg.stk[Arg.top-1])))
+    |'_':(* IsLink  *) Top1(ArgStack, a1, CHR(data));
+                       a1.data := BoolVal(a.KIND(a1) = a.Link);
+                       a.SETKIND(a1, a.Int);
 
-    |',':(* Next    *) w.Assert(Arg.top > 0, "Next requires an item on the stk.");
-                       a.Next(Arg.stk[Arg.top-1])
+    |',':(* Next    *) Top1(ArgStack, a1, CHR(data));
+                       IF a.ADDR(a1.next) = 0 THEN
+                         a1.data := 0;
+                         a.SETKIND(a1, a.Int)
+                       ELSE
+                         a.FetchValue(a1.next, a1)
+                       END
 
-    |'.':(* a.Fetch   *) w.Assert(Arg.top > 0, "a.Fetch requires an item on the stk.");
-                       a.Fetch(Arg.stk[Arg.top-1])
+    |'.':(* Fetch   *) Top1(ArgStack, a1, CHR(data));
+                       w.Assert(a.KIND(a1) = a.Link, "Fetch requires a link on the stack.");
+                       a.FetchValue(a1.data, a1)
 
-    |':':(* Store   *) w.Assert(Arg.top >= 2, "':' store operator requires 2 args.");
-                       w.Assert(a.IsLink(Arg.stk[Arg.top-1]), "Store requires link at top of stack.");
-                       a.StoreValue(Arg.stk[Arg.top-2], Arg.stk[Arg.top-1]);
-                       DEC(Arg.top, 2);
+    |':':(* Store   *) Top2(ArgStack, a1, a2, CHR(data));
+                       w.Assert(a.KIND(a2) = a.Link, "Store requires a link on top of the stack.");
+                       a2 := a.ATOM(a2.data);  (* Address target atom *)
+                       w.Assert(a.KIND(a2) < a.Flat, "Store requires unflattened target atom.");
+                       a2.data := a1.data;
+                       a.SETKIND(a2, a.KIND(a1));
+                       Drop(ArgStack); Drop(ArgStack)
 
     (* Control transfer *)
-    |'!':(* Execute *) w.Assert(Return.top < StackDepth-1,
-                              "Cannot enter nested list as return stack is full.");
-                       w.Assert(Arg.top >= 1, "'!' execute operator requires 1 arg.");
-                       INC(Return.top); Return.stk[Return.top-1] := n;
-                       n := Arg.stk[Arg.top-1];  DEC(Arg.top);
-                       w.Assert(a.IsLink(n), "'!' execute expects Link.");
-                       INC(Return.top); Return.stk[Return.top-1] := n;
+    |'!':(* Execute *) Top1(ArgStack, a1, CHR(data));
+                       w.Assert(a.KIND(a1) = a.Link, "'!' operator requires a link on top of stcak.");
+                       PushLink(ReturnStack, next);
+                       next := a1.data;
+                       PushLink(ReturnStack, next);
+                       Drop(ArgStack)
 
     (* Input and output *)
-    |'R':(* Input   *) w.Assert(Arg.top < StackDepth, "'R' read blocked because arg stack is full.");
-                       In.Char(c);  INC(Arg.top);  a.InitInt(Arg.stk[Arg.top-1], ORD(c))
+    |'R':(* Input   *) In.Char(c);  PushInt(ArgStack, ORD(c))
 
-    |'W':(* Output  *) w.Assert(Arg.top >= 1, "W operator requires 1 arg.");
-                       wvalue(Arg.stk[Arg.top-1]); DEC(Arg.top); w.fl
+    |'W':(* Output  *) Top1(ArgStack, a1, CHR(data));
+                       wValue(a1);
+                       Drop(ArgStack)
 
     |'L':(* Newline *) w.l
 
-    |'S':(* DumpStk *) DumpStack(Arg)
+    |'S':(* DumpStk *) DumpStack(ArgStack)
 
     |'X':(* DbgExit *) w.Fail("'X' intrinsic - Forced debug exit.")
 
     ELSE w.lc; w.s("Unrecognised intrinsic code: ");
-      w.i(Program.data); w.c(' '); w.u(Program.data); w.Fail("")
+      w.i(data); w.c(' '); w.u(data); w.Fail("")
     END
   ELSE  (* handle program link - i.e.push linked list *)
-    w.Assert(Arg.top < StackDepth, "Push link blocked because arg stack is full.");
-    a.Fetch(Program);  INC(Arg.top);  Arg.stk[Arg.top-1] := Program
+    PushLink(ArgStack, data)
   END;
-  Program := n;
+  ProgramLink := next;
   (* When Program is not a link we've reached end of function and must return to caller *)
-  WHILE (~a.IsLink(Program)) & (Return.top > 1) DO
-    DEC(Return.top);  Program := Return.stk[Return.top-1];  DEC(Return.top);
+  WHILE (a.ADDR(ProgramLink) = 0) & (a.ADDR(ReturnStack) # 0) DO
+    Drop(ReturnStack);  (* Drop start of current function *)
+    a.FetchAtom(ReturnStack, ProgramLink, next);
+    w.Assert(next MOD 4 = a.Link, "Expected return link on return stack.");
+    Drop(ReturnStack)
   END
 END Step;
 

@@ -40,20 +40,10 @@ TYPE
   END;
   Atom* = POINTER [1] TO AtomDesc;  (* Not garbage collected by Oberon RTS *)
 
-  (* Value can be a singular value, or the current value of a list. *)
-  Value* = RECORD
-    kind-: Cell;  (* Int or Link. *)
-    data-: Cell;  (* Integer value or adress of AtomDesc. *)
-    atom*: Atom;  (* Cell of current AtomDesc if Link. *)
-    (* Private cache for link into flatlist, 0 if not flat. *)
-    pos-:  Cell;  (* Address of this value, 0 if none, or not flat. *)
-    next-: Cell;  (* Address of next value, 0 if none, or not flat. *)
-    lim-:  Cell;  (* Limit address of data referenced by atom. *)
-  END;
 
 VAR
   Memory*: ARRAY AtomCount OF AtomDesc;
-  Free*:    Atom;
+  Free*:   Atom;
 
   IntrinsicVariable*: ARRAY 26 OF Cell;
 
@@ -77,7 +67,7 @@ PROCEDURE- SETPARAM*(VAR a: Cell; p: Cell) "*((INT64*)(a)) = ((*((INT64*)(a)) & 
 (* ---------------------------- FLattened values ---------------------------- *)
 
 
-PROCEDURE Expand*(VAR addr: Cell; VAR data: Cell);
+PROCEDURE ExpandFlatValue*(VAR addr: Cell; VAR data: Cell);
 VAR byte: Int8; accumulator: Cell;
 BEGIN
   SYSTEM.GET(addr, byte);
@@ -100,90 +90,63 @@ BEGIN
   END;
   INC(addr);
   data := accumulator;
-END Expand;
+END ExpandFlatValue;
 
-PROCEDURE ExpandValue(addr: Cell; VAR v: Value);
+
+(* ---------------------------- Atom navigation ----------------------------- *)
+
+PROCEDURE FetchAtom*(link: Cell; VAR data, next: Cell);
+CONST debug = FALSE;
+VAR target: Atom;  param, addr, result: Cell;
 BEGIN
-  w.Assert(addr < v.lim, "InitLink: link offset beyond target compressed bytes.");
-  v.pos := addr;
-  v.kind := Int;
-  Expand(addr, v.data);
-  w.Assert(addr <= v.lim, "Decoded flat value extended past end of flat block.");
-  IF addr < v.lim THEN v.next := addr ELSE v.next := 0 END
-END ExpandValue;
+  target := ATOM(link);
 
-
-(* --------------------------------- Values --------------------------------- *)
-
-PROCEDURE InitInt*(VAR v: Value; i: Cell);
-BEGIN
-  v.kind := Int;
-  v.data := i;
-  v.atom := NIL;
-  v.pos  := 0;
-  v.next := 0;
-  v.lim  := 0;
-END InitInt;
-
-PROCEDURE InitLink*(VAR v: Value; link: Cell);
-BEGIN
-  v.atom := ATOM(link);  w.Assert(v.atom # NIL, "Cannot InitLink from NIL.");
-  v.kind := KIND(v.atom);
-  IF v.kind < Flat THEN
-    v.data := v.atom.data;
-    v.pos  := 0;
-    v.next := 0;
-    v.lim  := 0;
-  ELSE  (* Set up for link into flat list *)
-    v.lim := v.atom.data MOD 10000000000000H + PARAM(v.atom.data);
-    ExpandValue(v.atom.data MOD 10000000000000H + PARAM(link), v)
-  END
-END InitLink;
-
-PROCEDURE IsLink*(VAR v: Value): BOOLEAN;
-BEGIN RETURN v.atom # NIL END IsLink;
-
-PROCEDURE Truth*(VAR v: Value): BOOLEAN;
-BEGIN RETURN IsLink(v) OR (v.data # 0) END Truth;
-
-PROCEDURE Next*(VAR v: Value);
-BEGIN
-  w.Assert(IsLink(v), "Next expects reference that is a Link, not an Int.");
-  IF v.next # 0 THEN ExpandValue(v.next, v)
-  ELSIF ATOM(v.atom.next) = NIL THEN InitInt(v, 0)
-  ELSE InitLink(v, v.atom.next)
+  IF debug THEN
+    w.s("FetchAtom. link to "); w.x(link,1); w.l;
+    IF target = NIL THEN
+      w.sl("  target is NIL.")
+    ELSE
+      w.s("  target.next "); w.x(target.next, 16); w.l;
+      w.s("  target.data "); w.x(target.data, 16); w.l;
+    END
   END;
-END Next;
 
-PROCEDURE Fetch*(VAR v: Value);
-BEGIN
-  w.Assert(IsLink(v), "Fetch expects reference that is a Link, not an Int.");
-  IF v.kind = Int THEN InitInt(v, v.data)
-  ELSE InitLink(v, v.data)
-  END
-END Fetch;
-
-PROCEDURE StoreValue*(source: Value; VAR target: Value);
-VAR a: Atom;
-BEGIN
-  w.Assert(IsLink(target), "Target reference of Store must be a link.");
-  IF KIND(target.atom) = Flat THEN
-    w.Fail("StoreValue target is in flat list but unflattening is not yet implemented.")
-  END;
-  IF IsLink(source) THEN
-    (* target.atom is the atom that we are updating. *)
-    SETKIND(target.atom, Link);
-    target.atom.data := SYSTEM.VAL(Cell, source.atom);
-    IF source.pos # 0 THEN
-      SETPARAM(target.atom.data, source.pos - source.atom.data MOD 10000000000000H)
-    END;
-    InitLink(target, target.atom.data)
+  IF target = NIL THEN
+    next := 0; data := 0  (* Result is 0 integer atom. *)
+  ELSIF KIND(target) < Flat THEN
+    w.Assert(PARAM(link) = 0, "FetchAtom target is plain atom but link has nonzero parameter.");
+    next := target.next;
+    data := target.data
   ELSE
-    SETKIND(target.atom, Int);
-    target.atom.data := source.data;
-    InitLink(target, SYSTEM.VAL(Cell, target.atom))
+    param := PARAM(link);
+    w.Assert(param < PARAM(target.data), "FetchAtom target is flat atom but link parameter addresses beyond flattened valuses.");
+    addr := ADDR(target.data) + param;
+    ExpandFlatValue(addr, data);
+    param := addr - ADDR(target.data);
+    IF param < PARAM(target.data) THEN
+      next := link;
+      SETPARAM(next, param)
+    ELSE
+      next := LINK(target.next)
+    END
   END;
-END StoreValue;
+
+  IF debug THEN
+    w.sl("  returning:");
+    w.s("    next "); w.x(next, 16); w.l;
+    w.s("    data "); w.x(data, 16); w.l
+  END
+
+END FetchAtom;
+
+(* Fetch value of link to value of target atom. atom.next is unaffected. *)
+PROCEDURE FetchValue*(link: Cell; atom: Atom);
+VAR next: Cell;
+BEGIN
+  w.Assert(ADDR(link) # 0, "FetchValue passed NIL link.");
+  FetchAtom(link, atom.data, next);
+  SETKIND(atom, next)
+END FetchValue;
 
 
 (* --------------------------------- Atoms --------------------------------- *)
