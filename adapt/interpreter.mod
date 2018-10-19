@@ -93,7 +93,7 @@ BEGIN
     i := 0;
     w.sl("stack content:");
     WHILE a.ADDR(stack) # 0 DO
-      w.s("  ["); w.i(i); w.s("] ");
+      w.lc; w.s("  ["); w.i(i); w.s("] ");
       a.FetchAtom(stack, data, next);
       IF next MOD 4 >= a.Flat THEN
         w.sl(" kind > 1 (not dumping content).");
@@ -271,15 +271,17 @@ BEGIN
                        a.SETKIND(a1, a.Int);
 
     |',':(* Next    *) Top1(ArgStack, a1, CHR(data));
-                       IF a.ADDR(a1.next) = 0 THEN
+                       w.Assert(a.KIND(a1) = a.Link, "',' (next) expects link on top of stack.");
+                       a.FetchAtom(a1.data, nextdata, nextnext);
+                       IF a.ADDR(nextnext) = 0 THEN
                          a1.data := 0;
                          a.SETKIND(a1, a.Int)
                        ELSE
-                         a.FetchValue(a1.next, a1)
-                       END
+                         a1.data := nextnext
+                       END;
 
     |'.':(* Fetch   *) Top1(ArgStack, a1, CHR(data));
-                       w.Assert(a.KIND(a1) = a.Link, "Fetch requires a link on the stack.");
+                       w.Assert(a.KIND(a1) = a.Link, "'.' (fetch) requires a link on the stack.");
                        a.FetchValue(a1.data, a1)
 
     |':':(* Store   *) Top2(ArgStack, a1, a2, CHR(data));

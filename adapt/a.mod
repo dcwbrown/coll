@@ -136,16 +136,24 @@ BEGIN
     w.s("    next "); w.x(next, 16); w.l;
     w.s("    data "); w.x(data, 16); w.l
   END
-
 END FetchAtom;
 
 (* Fetch value of link to value of target atom. atom.next is unaffected. *)
 PROCEDURE FetchValue*(link: Cell; atom: Atom);
+CONST debug = FALSE;
 VAR next: Cell;
 BEGIN
   w.Assert(ADDR(link) # 0, "FetchValue passed NIL link.");
   FetchAtom(link, atom.data, next);
-  SETKIND(atom, next)
+  SETKIND(atom, next MOD 4);
+
+  IF debug THEN
+    w.s("FetchValue. link to "); w.x(link,1); w.sl(", returned:");
+    w.s("    next "); w.x(next, 16); w.l;
+    w.s("    atom.next "); w.x(atom.next, 16); w.l;
+    w.s("    atom.data "); w.x(atom.data, 16); w.l
+  END;
+
 END FetchValue;
 
 

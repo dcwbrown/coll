@@ -114,8 +114,15 @@ L
 [Match test. (string pattern)]#
 [ p: c: 0t: 01-
   [Before begin-match]d.!
+
+  L[---]WL
+  [p ]W p S
+  [. ]W . S
+  [, ]W , S #
+
   s.!
   [After begin-match]d.!
+
   S
   [ m.! [After match]d.! " 2<@? 2-]!
   [Match test complete, ]W S # L
