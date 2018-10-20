@@ -8,9 +8,11 @@ CONST
 
 
 VAR
+  ProgramLink*:  a.Cell;  (* Currently executing program *)
   ArgStack*:     a.Cell;  (* Argument stack *)
   ReturnStack*:  a.Cell;  (* Function return stack *)
-  ProgramLink*:  a.Cell;  (* Currently executing program *)
+  LocalStack*:   a.Cell;  (* Local variables stack *)
+  Locals:        a.Cell;  (* Current local variables *)
 
 
 PROCEDURE wList*(link: a.Cell);
@@ -130,7 +132,7 @@ CONST debug = FALSE;
 BEGIN
   atom := a.ATOM(stack);
   IF atom = NIL THEN w.lc; w.s("Assertion failure: '"); w.c(id);
-                     w.sl("'' operator requires 1 arg but stack empty.") END;
+                     w.sl("' operator requires 1 arg but stack empty.") END;
 
   IF debug THEN
     w.lc; w.s("Top1 stack link to "); w.x(stack, 1); w.l;
@@ -145,10 +147,10 @@ CONST debug = FALSE;
 BEGIN
   a2 := a.ATOM(stack);
   IF a2 = NIL THEN w.lc; w.s("Assertion failure: '"); w.c(id);
-                   w.sl("'' operator requires 2 args but stack empty.") END;
+                   w.sl("' operator requires 2 args but stack empty.") END;
   a1 := a.ATOM(a2.next);
   IF a1 = NIL THEN w.lc; w.s("Assertion failure: '"); w.c(id);
-                   w.sl("'' operator requires 2 args but stack has only one.") END;
+                   w.sl("' operator requires 2 args but stack has only one.") END;
 
   IF debug THEN
     w.lc; w.s("Top2 stack link to "); w.x(stack, 1); w.l;
@@ -168,7 +170,9 @@ BEGIN IF b THEN RETURN 1 ELSE RETURN 0 END END BoolVal;
 
 PROCEDURE Step*;
 CONST debug = FALSE;
-VAR data, next, nextdata, nextnext, i: a.Cell; c: CHAR;
+VAR
+  data, next, nextdata, nextnext, i: a.Cell;
+  c: CHAR;
   a1, a2, r: a.Atom;
 BEGIN
   a.FetchAtom(ProgramLink, data, next);
@@ -292,6 +296,38 @@ BEGIN
                        a.SETKIND(a2, a.KIND(a1));
                        Drop(ArgStack); Drop(ArgStack)
 
+    (* Local variables *)
+    |'(':(* Locals  *) Top1(ArgStack, a1, CHR(data));
+                       w.Assert(a.KIND(a1) = a.Int, "'(' (Locals) expects integer parameter.");
+                       w.Assert(a1.data >= 0, "'(' (Locals) expects positive integer parameter.");
+                       w.Assert(a1.data <= 8, "'(' (Locals) expects no more than 8 variables.");
+                       PushLink(LocalStack, Locals);
+                       i := a1.data - 1;
+                       ArgStack := a.LINK(a1.next);
+                       Locals := 0;
+
+                       WHILE i >= 0 DO
+                         a1 := a.ATOM(ArgStack);
+                         w.Assert(a1 # NIL, "Insufficient stack items for '(' local definition.");
+                         ArgStack := a.LINK(a1.next);
+                         a.SETLINK(a1.next, Locals);
+                         Locals := SYSTEM.VAL(a.Cell, a1);
+                         a.IntrinsicVariable[i] := Locals;
+                         DEC(i)
+                       END;
+
+    |')':(* Lexit   *) Top1(LocalStack, a1, CHR(data));  (* a1 is a link to the stack slice. *)
+                       w.Assert(a.KIND(a1) = a.Link, "')' (Lexit) expects local stack to contain link.");
+                       LocalStack := a.LINK(a1.next);
+                       Locals := a.LINK(a1.data);
+                       i := 0;
+                       a1 := a.ATOM(Locals);
+                       WHILE a1 # NIL DO
+                         a.IntrinsicVariable[i] := SYSTEM.VAL(a.Cell, a1);
+                         a1 := a.ATOM(a1.next);
+                         INC(i)
+                       END;
+
     (* Control transfer *)
     |'!':(* Execute *) Top1(ArgStack, a1, CHR(data));
                        w.Assert(a.KIND(a1) = a.Link, "'!' operator requires a link on top of stcak.");
@@ -330,5 +366,11 @@ BEGIN
 END Step;
 
 
+BEGIN
+  ProgramLink := 0;
+  ArgStack    := 0;
+  ReturnStack := 0;
+  LocalStack  := 0;
+  Locals      := 0
 END interpreter.
 
