@@ -84,7 +84,8 @@ BEGIN
   atom := a.ATOM(stack);
   w.Assert(atom # NIL, "Drop called with empty stack.");
   w.Assert(a.KIND(atom) < a.Flat, "Drop of flat atom not allowed.");
-  stack := a.LINK(atom.next)
+  stack := a.LINK(atom.next);
+  a.SETLINK(SYSTEM.VAL(a.Cell, atom), 0)
 END Drop;
 
 PROCEDURE DumpStack*(stack: a.Cell);
@@ -189,18 +190,25 @@ BEGIN
 
     (* Intrinsic global variables a..z and integer literals 0..F *)
     |'a'..'z':         i := data - ORD('a');
-                       IF a.IntrinsicVariable[i] = 0 THEN
-                         a.IntrinsicVariable[i] := SYSTEM.VAL(a.Cell, a.NewAtom())
-                       END;
-                       PushLink(ArgStack, a.IntrinsicVariable[i]);
-                       (*w.s("Following initrinsic variable push, "); DumpStack(Arg); w.l*)
+                       w.Assert(a.IntrinsicVariable[i] # 0, "Cannot load undefined intrinsic variable.");
+                       PushData(ArgStack, 0);
+                       a.FetchValue(a.IntrinsicVariable[i], a.ATOM(ArgStack))
 
     |'0'..'9':         PushInt(ArgStack, data - ORD('0'))
-    |'A'..'F':         PushInt(ArgStack, data - ORD('A') + 10)
 
-    |'`':              a.FetchAtom(next, nextdata, nextnext);
+    |'`':(* Literal *) a.FetchAtom(next, nextdata, nextnext);
                        w.Assert(nextnext MOD 4 = a.Int, "'`' expected a.Int.");
                        PushInt(ArgStack, nextdata);
+                       next := nextnext
+
+    |'$':(* Addr    *) a.FetchAtom(next, nextdata, nextnext);
+                       w.Assert((nextnext MOD 4 = a.Int)
+                              & (nextdata >= ORD('a'))
+                              & (nextdata <= ORD('z')), "'$' (Addr) expects local var name following.");
+                       IF a.IntrinsicVariable[nextdata-ORD('a')] = 0 THEN
+                         a.IntrinsicVariable[nextdata-ORD('a')] := SYSTEM.VAL(a.Cell, a.NewAtom())
+                       END;
+                       PushLink(ArgStack, a.IntrinsicVariable[nextdata-ORD('a')]);
                        next := nextnext
 
     (* Stack manipulation *)
@@ -210,7 +218,7 @@ BEGIN
 
     (* Basic operations *)
     |'~':(* Not     *) Top1(ArgStack, a1, CHR(data));
-                       a1.data := BoolVal(a1.data # 0);
+                       a1.data := BoolVal(a1.data = 0);
                        a.SETKIND(a1, a.Int);
 
     |'=':(* Equal   *) Top2(ArgStack, a1, a2, CHR(data));
@@ -305,7 +313,6 @@ BEGIN
                        i := a1.data - 1;
                        ArgStack := a.LINK(a1.next);
                        Locals := 0;
-
                        WHILE i >= 0 DO
                          a1 := a.ATOM(ArgStack);
                          w.Assert(a1 # NIL, "Insufficient stack items for '(' local definition.");
@@ -343,10 +350,12 @@ BEGIN
                        wValue(a1);
                        Drop(ArgStack)
 
+    |'C':(* CondNL  *) w.lc
     |'L':(* Newline *) w.l
 
     |'S':(* DumpStk *) DumpStack(ArgStack)
 
+    |'E':(* End     *) next := 0
     |'X':(* DbgExit *) w.Fail("'X' intrinsic - Forced debug exit.")
 
     ELSE w.lc; w.s("Unrecognised intrinsic code: ");
