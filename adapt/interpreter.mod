@@ -23,7 +23,10 @@ BEGIN
     IF next MOD 4 = a.Int THEN
       w.u(data)
     ELSE
-      w.c('['); wList(data); w.c(']')
+      (*w.c('['); wList(data); w.c(']')*)
+      (*w.u(02770H); wList(data); w.u(02771H)*)
+      (*w.u(2039H); wList(data); w.u(203AH)*)
+      w.u(169CH); wList(data); w.u(169BH)
     END;
     link := next
   END;

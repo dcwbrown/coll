@@ -1,5 +1,20 @@
 C[ADAPT testing.]WL
 
+[Locals test.]WL
+
+1 2 3 4
+4( a.WL b.WL c.WL d.WL
+
+   [---]WL
+
+   [First string] [Second string] [Third string]
+   3( a.WL b.WL c.WL d.wl )
+
+   [---]WL
+
+   a.WL b.WL c.WL d.WL
+)
+
 
 [s: Similar (l1 l2 -- l1' l2' length)]#
 
