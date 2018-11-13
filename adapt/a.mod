@@ -45,7 +45,7 @@ VAR
   Memory*: ARRAY AtomCount OF AtomDesc;
   Free*:   Atom;
 
-  IntrinsicVariable*: ARRAY 26 OF Cell;
+  IntrinsicVariable*: ARRAY 26 OF Cell;  (* named a..z *)
 
 
 (* ------------- C functions to access parts of the next field. ------------- *)
@@ -138,7 +138,7 @@ BEGIN
   END
 END FetchAtom;
 
-(* Fetch value of link to value of target atom. atom.next is unaffected. *)
+(* Fetch value at link to value of target atom. atom.next is unaffected. *)
 PROCEDURE FetchValue*(link: Cell; atom: Atom);
 CONST debug = FALSE;
 VAR next: Cell;
@@ -177,8 +177,8 @@ BEGIN
   END;
   Memory[LEN(Memory)-1].next := 0;
   Memory[LEN(Memory)-1].data := 0;
-  FOR i := 0 TO LEN(IntrinsicVariable)-1 DO IntrinsicVariable[i] := 0 END;
-  Free := ATOM(SYSTEM.ADR(Memory))
+  Free := ATOM(SYSTEM.ADR(Memory));
+  FOR i := 0 TO LEN(IntrinsicVariable)-1 DO IntrinsicVariable[i] := 0 END
 END InitMemory;
 
 

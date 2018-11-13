@@ -191,27 +191,30 @@ BEGIN
     CASE CHR(data) OF
     |' ', 0AX, 0DX: (* No op   *)
 
-    (* Intrinsic global variables a..z and integer literals 0..F *)
+    (* Integer literals 0..9 *)
+    |'0'..'9':         PushInt(ArgStack, data - ORD('0'))
+
+    (* Intrinsic global variables a..z *)
     |'a'..'z':         i := data - ORD('a');
                        w.Assert(a.IntrinsicVariable[i] # 0, "Cannot load undefined intrinsic variable.");
                        PushData(ArgStack, 0);
                        a.FetchValue(a.IntrinsicVariable[i], a.ATOM(ArgStack))
 
-    |'0'..'9':         PushInt(ArgStack, data - ORD('0'))
-
-    |'`':(* Literal *) a.FetchAtom(next, nextdata, nextnext);
-                       w.Assert(nextnext MOD 4 = a.Int, "'`' expected a.Int.");
-                       PushInt(ArgStack, nextdata);
-                       next := nextnext
-
-    |'$':(* Addr    *) a.FetchAtom(next, nextdata, nextnext);
+    |'`':(* ToVar   *) a.FetchAtom(next, nextdata, nextnext);
                        w.Assert((nextnext MOD 4 = a.Int)
                               & (nextdata >= ORD('a'))
                               & (nextdata <= ORD('z')), "'$' (Addr) expects local var name following.");
-                       IF a.IntrinsicVariable[nextdata-ORD('a')] = 0 THEN
-                         a.IntrinsicVariable[nextdata-ORD('a')] := SYSTEM.VAL(a.Cell, a.NewAtom())
+                       i := nextdata - ORD('a');
+                       IF a.IntrinsicVariable[i] = 0 THEN
+                         a.IntrinsicVariable[i] := SYSTEM.VAL(a.Cell, a.NewAtom())
                        END;
-                       PushLink(ArgStack, a.IntrinsicVariable[nextdata-ORD('a')]);
+                       a.FetchValue(ArgStack, a.ATOM(a.IntrinsicVariable[i]));
+                       Drop(ArgStack);
+                       next := nextnext
+
+    |"'":(* Literal *) a.FetchAtom(next, nextdata, nextnext);
+                       w.Assert(nextnext MOD 4 = a.Int, "'`' expected a.Int.");
+                       PushInt(ArgStack, nextdata);
                        next := nextnext
 
     (* Stack manipulation *)

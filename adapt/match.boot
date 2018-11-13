@@ -1,35 +1,40 @@
 C[ADAPT testing.]WL
 
 [Locals test.]WL
-
 1 2 3 4
-4( a.WL b.WL c.WL d.WL
+4(
+   aWL bWL cWL dWL
 
    [---]WL
 
    [First string] [Second string] [Third string]
-   3( a.WL b.WL c.WL d.wl )
+   3( aWL bWL cWL )
 
    [---]WL
 
-   a.WL b.WL c.WL d.WL
+   aWL bWL cWL dWL
+
+   [---]WL
 )
+
+[Variable store test.]WL
+
 
 
 [s: Similar (l1 l2 -- l1' l2' length)]#
 
-[ 0$c:
+[ 0`c
   2([
     a_ b_ &~ []?      [Exit if either is not a link.]#
     a. b. =~ []?      [Exit if they reference different values.]#
-    a,$a:  b,$b:  c1+$c:
+    a,`a  b,`b  c1+`c
     1@?
   ]! a b c)
-] $s:
+] `s
 
-[alpha] [alpha] SL z! SL ###
-[alpha] [algol] SL z! SL ###
-[alpha] [beta]  SL z! SL ###
+[alpha] [alpha] SL s! SL ###
+[alpha] [algol] SL s! SL ###
+[alpha] [beta]  SL s! SL ###
 
 
 [m: Match (key pattern -- key' pattern' length)]#
