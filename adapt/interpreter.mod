@@ -106,7 +106,7 @@ BEGIN
       ELSIF next MOD 4 = a.Int THEN
         w.s(" Int:  "); w.i(data); w.s(", '"); w.u(data); w.sl("'.")
       ELSE
-        w.s(" Link: "); wList(data)
+        w.s(" Link: "); wList(data); w.lc
       END;
       INC(i);
       stack := a.LINK(next)
@@ -163,9 +163,18 @@ BEGIN
     w.s("  a2.next "); w.x(a2.next,16); w.l;
     w.s("  a2.data "); w.x(a2.data,16); w.l;
   END;
-
 END Top2;
 
+
+PROCEDURE ExitList(): a.Cell;  (* Return address of next instruction *)
+VAR next, data: a.Cell;
+BEGIN
+  Drop(ReturnStack);  (* Drop start of current function *)
+  a.FetchAtom(ReturnStack, data, next);
+  w.Assert(next MOD 4 = a.Link, "Expected return link on return stack.");
+  Drop(ReturnStack);
+  RETURN data
+END ExitList;
 
 (* ----------------------------- Interpreter ------------------------------ *)
 
@@ -266,21 +275,16 @@ BEGIN
                        Drop(ArgStack)
 
     (* Conditional *)
-    |'?':(* If      *) Top2(ArgStack, a1, a2, CHR(data));
-                       w.Assert(a.KIND(a2) = a.Link, "'?' requires link on TOS.");
-                       IF a1.data # 0 THEN
-                         next := a2.data;
-                         r := a.ATOM(ReturnStack);
-                         w.Assert(r # NIL, "'?' operator requires non-empty return stack.");
-                         r.data := next;           (* maintain top of return stack as *)
-                         a.SETKIND(r, a.Link)      (* start of currently executing list *)
-                       END;
-                       Drop(ArgStack); Drop(ArgStack)
+    |'?':(* If      *) (* exit list if tos not true *)
+                       Top1(ArgStack, a1, CHR(data));
+                       IF a1.data = 0 THEN next := ExitList() END;
+                       Drop(ArgStack)
 
-    |'@':(* Start   *) r := a.ATOM(ReturnStack);
+    (* Iteration *)
+    |'@':(* Loop    *) r := a.ATOM(ReturnStack);
                        w.Assert(r # NIL, "'@' operator requires non-empty return stack.");
                        w.Assert(a.KIND(r) = a.Link, "'@' operator requires link on top of return stack");
-                       PushLink(ArgStack, r.data)
+                       next := r.data;
 
 
     (* Atom access *)
@@ -373,10 +377,7 @@ BEGIN
   ProgramLink := next;
   (* When Program is not a link we've reached end of function and must return to caller *)
   WHILE (a.ADDR(ProgramLink) = 0) & (a.ADDR(ReturnStack) # 0) DO
-    Drop(ReturnStack);  (* Drop start of current function *)
-    a.FetchAtom(ReturnStack, ProgramLink, next);
-    w.Assert(next MOD 4 = a.Link, "Expected return link on return stack.");
-    Drop(ReturnStack)
+    ProgramLink := ExitList()
   END
 END Step;
 

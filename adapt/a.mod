@@ -64,8 +64,7 @@ PROCEDURE- SETUSAGE*(    a: Atom; m: Cell) "(a)->next = (((a)->next & 0xFFFFFFFF
 PROCEDURE- SETPARAM*(VAR a: Cell; p: Cell) "*((INT64*)(a)) = ((*((INT64*)(a)) & 0x0000FFFFFFFFFFFF) | (((p) & (INT64)0xFFFF) << 52))";
 
 
-(* ---------------------------- FLattened values ---------------------------- *)
-
+(* ---------------------------- Flattened values ---------------------------- *)
 
 PROCEDURE ExpandFlatValue*(VAR addr: Cell; VAR data: Cell);
 VAR byte: Int8; accumulator: Cell;
@@ -138,7 +137,7 @@ BEGIN
   END
 END FetchAtom;
 
-(* Fetch value at link to value of target atom. atom.next is unaffected. *)
+(* Fetch value at link to value of target atom. Target atom.next is unaffected. *)
 PROCEDURE FetchValue*(link: Cell; atom: Atom);
 CONST debug = FALSE;
 VAR next: Cell;
