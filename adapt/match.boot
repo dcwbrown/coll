@@ -2,9 +2,9 @@ C[ADAPT testing.]WL
 
 
 
-[s: Similar (l1 l2 -- l1' l2' length-matched)]#
+[s: Similar (a b -- a' b' length-matched)]#
 
-[ 0`c
+[ 0 `c                    [c will count length matched.]#
   2([ a_ b_ &?            [Exit if either is not a link.]#
       a. b. =?            [Exit if they reference different values.]#
       a,`a  b,`b  c1+`c   [Advance a and b and increment c.]#

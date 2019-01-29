@@ -39,7 +39,7 @@ BEGIN
   w.Assert(SYSTEM.VAL(a.Cell, NIL) = 0, "Expected NIL to be zero.");
   w.s("Address size is "); w.i(SIZE(a.Cell)*8); w.sl(" bits.");
 
-  w.sl("Usage at start:"); DumpStats;
+  (* w.sl("Usage at start:"); DumpStats; *)
 
   (* Load the bootstrap as intrinsic variable 'z'. *)
   (*a.IntrinsicVariable[25] := bootstrap.Load("test.boot");*)
@@ -56,11 +56,12 @@ BEGIN
 
   w.l; w.sl("Usage after bootstrap executed:"); DumpStats;
 
+  (*
   reorganise.Collect;
 
-  (*w.l; w.sl("Usage after first collection:"); DumpStats;*)
+  ( *w.l; w.sl("Usage after first collection:"); DumpStats;* )
 
-  (* Run the bootstrap *)
+  ( * Run the bootstrap * )
   w.sl("Running bootstrap after first collection.");
   interpreter.ProgramLink := a.IntrinsicVariable[25];
   WHILE a.ADDR(interpreter.ProgramLink) # 0 DO interpreter.Step END;
@@ -69,7 +70,6 @@ BEGIN
 
   w.l; w.sl("Usage after bootstrap executed:"); DumpStats;
 
-  (*
   reorganise.Collect;
 
   w.l; w.sl("Usage after second collection:"); DumpStats;
