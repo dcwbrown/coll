@@ -1,0 +1,813 @@
+{
+	"auto_complete":
+	{
+		"selected_items":
+		[
+			[
+				"A",
+				"A"
+			]
+		]
+	},
+	"buffers":
+	[
+		{
+			"file": "/C/Users/dave/Nextcloud/Documents/notes.flux",
+			"settings":
+			{
+				"buffer_size": 964240,
+				"encoding": "UTF-8",
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "test.mod",
+			"settings":
+			{
+				"buffer_size": 3612,
+				"encoding": "UTF-8",
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "a.mod",
+			"settings":
+			{
+				"buffer_size": 5982,
+				"encoding": "UTF-8",
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "w.mod",
+			"settings":
+			{
+				"buffer_size": 1965,
+				"encoding": "UTF-8",
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "prefix.mod",
+			"settings":
+			{
+				"buffer_size": 1864,
+				"encoding": "UTF-8",
+				"line_ending": "Windows",
+				"name": "MODULE prefix;"
+			}
+		},
+		{
+			"file": "makefile",
+			"settings":
+			{
+				"buffer_size": 708,
+				"encoding": "UTF-8",
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "interpreter.mod",
+			"settings":
+			{
+				"buffer_size": 14214,
+				"encoding": "UTF-8",
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "adapt.sublime-project",
+			"settings":
+			{
+				"buffer_size": 45,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "a.c",
+			"settings":
+			{
+				"buffer_size": 3747,
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "bootstrap.mod",
+			"settings":
+			{
+				"buffer_size": 2272,
+				"encoding": "UTF-8",
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "match.boot",
+			"settings":
+			{
+				"buffer_size": 1665,
+				"encoding": "UTF-8",
+				"line_ending": "Unix"
+			}
+		},
+		{
+			"file": "/C/Users/dave/projects/oberon/test/test.mod",
+			"settings":
+			{
+				"buffer_size": 1174,
+				"encoding": "UTF-8",
+				"line_ending": "Unix"
+			}
+		}
+	],
+	"build_system": "",
+	"build_system_choices":
+	[
+	],
+	"build_varint": "",
+	"command_palette":
+	{
+		"height": 0.0,
+		"last_filter": "",
+		"selected_items":
+		[
+			[
+				"git",
+				"Set Syntax: Git Log"
+			],
+			[
+				"Package Control: ",
+				"Package Control: Remove Package"
+			]
+		],
+		"width": 0.0
+	},
+	"console":
+	{
+		"height": 157.0,
+		"history":
+		[
+			"import urllib.request,os,hashlib; h = '6f4c264a24d933ce70df5dedcf1dcaee' + 'ebe013ee18cced0ef93d5f746d80ef60'; pf = 'Package Control.sublime-package'; ipp = sublime.installed_packages_path(); urllib.request.install_opener( urllib.request.build_opener( urllib.request.ProxyHandler()) ); by = urllib.request.urlopen( 'http://packagecontrol.io/' + pf.replace(' ', '%20')).read(); dh = hashlib.sha256(by).hexdigest(); print('Error validating download (got %s instead of %s), please try manual install' % (dh, h)) if dh != h else open(os.path.join( ipp, pf), 'wb' ).write(by)"
+		]
+	},
+	"distraction_free":
+	{
+		"menu_visible": true,
+		"show_minimap": false,
+		"show_open_files": false,
+		"show_tabs": false,
+		"side_bar_visible": false,
+		"status_bar_visible": false
+	},
+	"expanded_folders":
+	[
+		"/C/Users/dave/projects/oberon/coll/adapt"
+	],
+	"file_history":
+	[
+		"/C/Users/dave/projects/oberon/coll/adapt/adapt.sublime-project",
+		"/C/Users/dave/projects/oberon/coll/adapt/interpreter.mod",
+		"//OLD/install/PhaseOne/CaptureOne.Win.12.0.0 registration.txt",
+		"//OLD/publications/Computers and software/Programming languages/Pascal/CDC 6000/1984/P6K_WRITEUP.TXT",
+		"//OLD/publications/Computers and software/Programming languages/Pascal/CDC 6000/1984/P6K_UTILS.TXT",
+		"//OLD/publications/Computers and software/Programming languages/Pascal/CDC 6000/1984/P6K_UPG_GUIDE.TXT",
+		"//OLD/publications/Computers and software/Programming languages/Pascal/CDC 6000/1984/P6K_LIB_INFO.TXT",
+		"//OLD/publications/Computers and software/Programming languages/Pascal/CDC 6000/1984/P6K_SUMMARY.TXT",
+		"//OLD/publications/Computers and software/Programming languages/Pascal/CDC 6000/1984/P6K_INT_REF.TXT",
+		"//OLD/publications/Computers and software/Programming languages/Pascal/CDC 6000/1984/PascalSystemsTexts.txt",
+		"//OLD/publications/Computers and software/Programming languages/Pascal/CDC 6000/1984/PascalSystem.txt",
+		"//OLD/publications/Computers and software/Programming languages/Pascal/CDC 6000/1984/PascalRuntime.txt",
+		"//OLD/publications/Computers and software/Programming languages/Pascal/CDC 6000/1984/PascalMessages.txt",
+		"//OLD/publications/Computers and software/Programming languages/Pascal/CDC 6000/1984/PascalLibrary.txt",
+		"//OLD/publications/Computers and software/Programming languages/Pascal/CDC 6000/1984/PascalHistory.txt",
+		"//OLD/publications/Computers and software/Programming languages/Pascal/CDC 6000/1984/PascalCompiler.txt",
+		"/C/Users/dave/projects/oberon/voc/src/tools/autobuild/server.pl",
+		"/C/Users/dave/projects/oberon/ethz/Book/ProjectOberon.V4/Splines.Mod",
+		"/C/Users/dave/projects/oberon/voc/src/runtime/Heap.Mod",
+		"/C/Users/dave/projects/oberon/voc/src/compiler/OPV.Mod",
+		"/C/Users/dave/projects/oberon/voc/src/compiler/OPC.Mod",
+		"/C/Users/dave/projects/oberon/voc/src/compiler/OPB.Mod",
+		"/C/Users/dave/projects/oberon/voc/src/compiler/OPT.Mod",
+		"/C/Users/dave/projects/oberon/voc/src/compiler/OPM.Mod",
+		"/C/Users/dave/projects/oberon/voc/src/compiler/OPP.Mod",
+		"/C/Users/dave/projects/oberon/hexconst/src/compiler/OPS.Mod",
+		"/C/Users/dave/lr2.svg",
+		"/C/Users/dave/Documents/lr4.svg",
+		"//OLD/install/QImage by DDI Software/Renewal.txt",
+		"/C/Users/dave/projects/oberon/ethz/Book/ProjectOberon.V4/Backup.Mod",
+		"/C/Users/dave/AppData/Roaming/SumatraPDF/SumatraPDF-settings.txt",
+		"/D/INSTRUCTIONS-README.txt",
+		"//OLD/publications/Tape recording/Hi Fi Tape link artcle index.txt",
+		"//OLD/publications/Practical Electronics/PE archive at.txt",
+		"/C/Users/dave/AppData/Local/Temp/Delivery report",
+		"/C/Users/dave/Downloads/Peter+Kogge+-+The+Architecture+of+Symbolic+Computers.pdf",
+		"/C/Users/dave/projects/oberon/voc/src/compiler/OPS.Mod",
+		"//OLD/install/Fonts/Input-Font/Input_Fonts/SETTINGS.txt",
+		"/C/Users/dave/AppData/Local/Temp/Files.odc",
+		"/C/Users/dave/Downloads/Quick-Start.odc",
+		"/C/Users/dave/Nextcloud/Documents/notes.flux",
+		"/C/Users/dave/projects/oberon/oberon-risc-emu-windows-v2016.1/README.md",
+		"/C/Users/dave/projects/oberon/Experimental/S3RISCinstall/RISC-Instructions.txt",
+		"/D/wpa_supplicant.conf",
+		"/D/wpa_supplicant.conf.sample",
+		"/C/Program Files (x86)/ImageWriter/README.txt",
+		"/C/Users/dave/start-ubuntu-xfce-desktop.bat"
+	],
+	"find":
+	{
+		"height": 27.0
+	},
+	"find_in_files":
+	{
+		"height": 0.0,
+		"where_history":
+		[
+		]
+	},
+	"find_state":
+	{
+		"case_sensitive": false,
+		"find_history":
+		[
+			"done",
+			"success",
+			"MatchingInts",
+			"success",
+			"Prefix",
+			"MatchintInts",
+			"points",
+			"i",
+			"a.ATOM(",
+			"nextcloud",
+			" '",
+			"data = ORD",
+			"wList",
+			"RedMail",
+			"iredmail",
+			", ",
+			"unbound",
+			"DNS",
+			"?",
+			"<header",
+			"<button",
+			"<section",
+			"</section>",
+			"<a",
+			"<path",
+			"</path>",
+			"</svg>",
+			"<\\/svg>",
+			"<svg",
+			"<div",
+			"<\\/div>",
+			"<\\/p>",
+			"\\<\\/p\\>",
+			"</p>",
+			"encrypt",
+			"-  at",
+			"i32",
+			"i16",
+			"i8",
+			"extnsion",
+			"000H",
+			"i64",
+			"i8",
+			"outtest",
+			"64",
+			"00H",
+			"00",
+			"__",
+			"SetIntType",
+			"number",
+			"Number",
+			")\n",
+			"Number",
+			"cyl",
+			"criggleplop",
+			"redma",
+			"var/",
+			"var",
+			"/",
+			"<div class=\"programme ",
+			"<div",
+			"cante",
+			"25"
+		],
+		"highlight": true,
+		"in_selection": false,
+		"preserve_case": false,
+		"regex": true,
+		"replace_history":
+		[
+			"\\n<header",
+			"\\n<button",
+			"\\n<section",
+			"\\n</section>\\n",
+			"\\n<a",
+			"\\n<path>",
+			"\\n</path>\\n",
+			"\\n</sgv>\\n",
+			"</sgv>\\n",
+			"\\n<svg",
+			"\\n<div",
+			"\\n\\1",
+			"\\1\\n",
+			"$1\\n",
+			"\\1\\n",
+			"%2F",
+			"\\n\\1",
+			"\\n<div"
+		],
+		"reverse": false,
+		"show_context": true,
+		"use_buffer2": true,
+		"whole_word": false,
+		"wrap": true
+	},
+	"groups":
+	[
+		{
+			"selected": 4,
+			"sheets":
+			[
+				{
+					"buffer": 0,
+					"file": "/C/Users/dave/Nextcloud/Documents/notes.flux",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 964240,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								964239,
+								964239
+							]
+						],
+						"settings":
+						{
+							"git_gutter_is_enabled": false,
+							"syntax": "Packages/User/Flux/Flux.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 433411.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 9,
+					"type": "text"
+				},
+				{
+					"buffer": 1,
+					"file": "test.mod",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 3612,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								2617,
+								2617
+							]
+						],
+						"settings":
+						{
+							"git_gutter_is_enabled": false,
+							"syntax": "Packages/Oberon/Oberon.sublime-syntax",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 833.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 8,
+					"type": "text"
+				},
+				{
+					"buffer": 2,
+					"file": "a.mod",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 5982,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								170,
+								170
+							]
+						],
+						"settings":
+						{
+							"git_gutter_is_enabled": false,
+							"syntax": "Packages/Oberon/Oberon.sublime-syntax",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 7,
+					"type": "text"
+				},
+				{
+					"buffer": 3,
+					"file": "w.mod",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 1965,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								1298,
+								1298
+							]
+						],
+						"settings":
+						{
+							"git_gutter_is_enabled": false,
+							"syntax": "Packages/Oberon/Oberon.sublime-syntax",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 173.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 6,
+					"type": "text"
+				},
+				{
+					"buffer": 4,
+					"file": "prefix.mod",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 1864,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								1646,
+								1646
+							]
+						],
+						"settings":
+						{
+							"annotation_comments":
+							{
+								"annotations":
+								{
+								},
+								"count": 0
+							},
+							"auto_name": "MODULE prefix;",
+							"git_gutter_is_enabled": false,
+							"syntax": "Packages/Oberon/Oberon.sublime-syntax",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 886.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 0,
+					"type": "text"
+				},
+				{
+					"buffer": 5,
+					"file": "makefile",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 708,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								455,
+								455
+							]
+						],
+						"settings":
+						{
+							"git_gutter_is_enabled": false,
+							"syntax": "Packages/Makefile/Makefile.sublime-syntax"
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 5,
+					"type": "text"
+				}
+			]
+		},
+		{
+			"selected": 3,
+			"sheets":
+			[
+				{
+					"buffer": 6,
+					"file": "interpreter.mod",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 14214,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								13197,
+								13197
+							]
+						],
+						"settings":
+						{
+							"git_gutter_is_enabled": false,
+							"history_list_is_closing": true,
+							"syntax": "Packages/Oberon/Oberon.sublime-syntax",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 3837.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 4,
+					"type": "text"
+				},
+				{
+					"buffer": 7,
+					"file": "adapt.sublime-project",
+					"semi_transient": true,
+					"settings":
+					{
+						"buffer_size": 45,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								25,
+								25
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/JavaScript/JSON.sublime-syntax"
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 3,
+					"type": "text"
+				},
+				{
+					"buffer": 8,
+					"file": "a.c",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 3747,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								153,
+								153
+							]
+						],
+						"settings":
+						{
+							"git_gutter_is_enabled": false,
+							"syntax": "Packages/C++/C.sublime-syntax",
+							"translate_tabs_to_spaces": false
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 2,
+					"type": "text"
+				},
+				{
+					"buffer": 9,
+					"file": "bootstrap.mod",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 2272,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								395,
+								395
+							]
+						],
+						"settings":
+						{
+							"git_gutter_is_enabled": false,
+							"syntax": "Packages/Oberon/Oberon.sublime-syntax",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 1,
+					"type": "text"
+				},
+				{
+					"buffer": 10,
+					"file": "match.boot",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 1665,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								35,
+								35
+							]
+						],
+						"settings":
+						{
+							"git_gutter_is_enabled": false,
+							"syntax": "Packages/Text/Plain text.tmLanguage",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 10,
+					"type": "text"
+				},
+				{
+					"buffer": 11,
+					"file": "/C/Users/dave/projects/oberon/test/test.mod",
+					"semi_transient": false,
+					"settings":
+					{
+						"buffer_size": 1174,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								1174,
+								1174
+							]
+						],
+						"settings":
+						{
+							"git_gutter_is_enabled": false,
+							"syntax": "Packages/Oberon/Oberon.sublime-syntax",
+							"tab_size": 2,
+							"translate_tabs_to_spaces": true
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
+						"zoom_level": 1.0
+					},
+					"stack_index": 11,
+					"type": "text"
+				}
+			]
+		}
+	],
+	"incremental_find":
+	{
+		"height": 27.0
+	},
+	"input":
+	{
+		"height": 0.0
+	},
+	"layout":
+	{
+		"cells":
+		[
+			[
+				0,
+				0,
+				1,
+				1
+			],
+			[
+				1,
+				0,
+				2,
+				1
+			]
+		],
+		"cols":
+		[
+			0.0,
+			0.505931751739,
+			1.0
+		],
+		"rows":
+		[
+			0.0,
+			1.0
+		]
+	},
+	"menu_visible": true,
+	"output.find_results":
+	{
+		"height": 0.0
+	},
+	"output.mdpopups":
+	{
+		"height": 0.0
+	},
+	"output.unsaved_changes":
+	{
+		"height": 127.0
+	},
+	"pinned_build_system": "",
+	"project": "adapt.sublime-project",
+	"replace":
+	{
+		"height": 50.0
+	},
+	"save_all_on_build": true,
+	"select_file":
+	{
+		"height": 0.0,
+		"last_filter": "",
+		"selected_items":
+		[
+		],
+		"width": 0.0
+	},
+	"select_project":
+	{
+		"height": 0.0,
+		"last_filter": "",
+		"selected_items":
+		[
+		],
+		"width": 0.0
+	},
+	"select_symbol":
+	{
+		"height": 0.0,
+		"last_filter": "",
+		"selected_items":
+		[
+		],
+		"width": 0.0
+	},
+	"selected_group": 0,
+	"settings":
+	{
+	},
+	"show_minimap": true,
+	"show_open_files": true,
+	"show_tabs": true,
+	"side_bar_visible": true,
+	"side_bar_width": 260.0,
+	"status_bar_visible": true,
+	"template_settings":
+	{
+	}
+}

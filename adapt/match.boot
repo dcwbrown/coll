@@ -1,5 +1,4 @@
-C[ADAPT testing.]WL
-
+C[^[ADAPT^] testing.^9   tab.^-1   ]WL
 
 
 [s: Similar (a b -- a' b' length-matched)]#

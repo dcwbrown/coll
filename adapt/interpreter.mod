@@ -1,6 +1,6 @@
 MODULE interpreter;  (* interpreter - data, algorithms and memory *)
 
-IMPORT w, a, In, SYSTEM;
+IMPORT w, a, prefix, In, SYSTEM;
 
 
 CONST
@@ -173,13 +173,29 @@ BEGIN
   a.FetchAtom(ReturnStack, data, next);
   w.Assert(next MOD 4 = a.Link, "Expected return link on return stack.");
   Drop(ReturnStack);
-  RETURN data
-END ExitList;
+RETURN data END ExitList;
+
+
+(* ----------------------------- Prefix tree ------------------------------ *)
+
+PROCEDURE Match();     (* i p -- i' p' n *)
+                       (* Walk pattern p according to input i *)
+                       (* Return length matched and last matching position *)
+VAR i, p: a.Atom;
+BEGIN
+  Top2(ArgStack, i, p, 'M');
+END Match;
+
+PROCEDURE Insert();
+BEGIN
+  
+END Insert;
+
 
 (* ----------------------------- Interpreter ------------------------------ *)
 
-PROCEDURE BoolVal(b: BOOLEAN): a.Cell;
-BEGIN IF b THEN RETURN 1 ELSE RETURN 0 END END BoolVal;
+PROCEDURE BoolAsInt(b: BOOLEAN): a.Cell;
+BEGIN IF b THEN RETURN 1 ELSE RETURN 0 END END BoolAsInt;
 
 PROCEDURE Step*;
 CONST debug = FALSE;
@@ -233,14 +249,14 @@ BEGIN
 
     (* Basic operations *)
     |'~':(* Not     *) Top1(ArgStack, a1, CHR(data));
-                       a1.data := BoolVal(a1.data = 0);
+                       a1.data := BoolAsInt(a1.data = 0);
                        a.SETKIND(a1, a.Int);
 
     |'=':(* Equal   *) Top2(ArgStack, a1, a2, CHR(data));
                        IF a.KIND(a1) # a.KIND(a2) THEN
                          a1.data := 0
                        ELSE
-                         a1.data := BoolVal(a1.data = a2.data)
+                         a1.data := BoolAsInt(a1.data = a2.data)
                        END;
                        a.SETKIND(a1, a.Int);
                        Drop(ArgStack)
@@ -248,7 +264,7 @@ BEGIN
     |'<':(* Lessthn *) Top2(ArgStack, a1, a2, CHR(data));
                        w.Assert(a.KIND(a1) = a.Int, "'<' requires 1st arg to be integer.");
                        w.Assert(a.KIND(a2) = a.Int, "'<' requires 2nd arg to be integer.");
-                       a1.data := BoolVal(a1.data < a2.data);
+                       a1.data := BoolAsInt(a1.data < a2.data);
                        a.SETKIND(a1, a.Int);
                        Drop(ArgStack)
 
@@ -265,12 +281,12 @@ BEGIN
                        Drop(ArgStack)
 
     |'&':(* And     *) Top2(ArgStack, a1, a2, CHR(data));
-                       a1.data := BoolVal((a1.data # 0) & (a2.data # 0));
+                       a1.data := BoolAsInt((a1.data # 0) & (a2.data # 0));
                        a.SETKIND(a1, a.Int);
                        Drop(ArgStack)
 
     |'|':(* Or      *) Top2(ArgStack, a1, a2, CHR(data));
-                       a1.data := BoolVal((a1.data # 0) OR (a2.data # 0));
+                       a1.data := BoolAsInt((a1.data # 0) OR (a2.data # 0));
                        a.SETKIND(a1, a.Int);
                        Drop(ArgStack)
 
@@ -289,7 +305,7 @@ BEGIN
 
     (* Atom access *)
     |'_':(* IsLink  *) Top1(ArgStack, a1, CHR(data));
-                       a1.data := BoolVal(a.KIND(a1) = a.Link);
+                       a1.data := BoolAsInt(a.KIND(a1) = a.Link);
                        a.SETKIND(a1, a.Int);
 
     |',':(* Next    *) Top1(ArgStack, a1, CHR(data));
@@ -352,6 +368,10 @@ BEGIN
                        next := a1.data;
                        PushLink(ReturnStack, next);
                        Drop(ArgStack)
+
+    (* Prefix tree manipulation *)
+    |'M': (* Match  *) Match
+    |'I': (* Insert *) Insert
 
     (* Input and output *)
     |'R':(* Input   *) In.Char(c);  PushInt(ArgStack, ORD(c))
