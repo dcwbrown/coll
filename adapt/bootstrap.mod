@@ -20,7 +20,7 @@ END AddAtom;
 PROCEDURE AddChar(VAR current: a.Atom;  ch: CHAR);
 VAR link: a.Atom;
 BEGIN
-  IF (BootState = 2) & ((ch < '0') OR (ch > '9')) THEN
+  IF (BootState = 2) & (ch # ' ') & ((ch < '0') OR (ch > '9')) THEN
     IF BootNeg THEN BootNumber := -BootNumber END; 
     AddAtom(current, BootNumber);
     BootState := 0;
@@ -48,7 +48,7 @@ BEGIN
         AddAtom(current, ORD(ch));
         BootState := 0
       END
-  |2: BootNumber := BootNumber*10 + ORD(ch) - ORD('0')
+  |2: IF ch # ' ' THEN BootNumber := BootNumber*10 + ORD(ch) - ORD('0') END
   ELSE w.Fail("Invalid boot state.")
   END
 END AddChar;

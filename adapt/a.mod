@@ -33,7 +33,7 @@ TYPE
                   *)
     data*: Cell;  (* Integer value, link address or flatlist limit. *)
     (* Cell format:
-         Int Cell:   64/integer value
+         Int cell:   64/integer value
          Link cell:  12/offset, 52/atom address (of flat atom)
          Flat cell:  12/length, 52/byte address (of compressed integers)
     *)

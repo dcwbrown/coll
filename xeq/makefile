@@ -26,10 +26,9 @@ endif
 %.o: %.mod
 	voc -r -s -OC $^
 
-test$(XE): test.mod TextWriter.o w.o a.o
-test$(XE): bootstrap.o prefix.o interpreter.o
-test$(XE): dumping.o reorganise.o
-test$(XE): *.boot
+test$(XE): test.mod TextWriter.o w.o
+test$(XE): Codespace.o Codegen.o Functions.o Jobs.o
+test$(XE): Prefix.o
 test$(XE):
 	voc -r -M -OC test.mod
 

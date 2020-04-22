@@ -31,10 +31,30 @@ BEGIN
 END DumpStats;
 
 
+PROCEDURE DumpTree*(link: a.Cell);
+VAR data, next: a.Cell;
+BEGIN
+  WHILE a.ADDR(link) # 0 DO
+    a.FetchAtom(link, data, next);
+    IF next MOD 4 = a.Int THEN
+      IF (data < 32 ) & (data # 13) & (data # 10) THEN
+        w.c('^'); w.i(data); w.c(' ')
+      ELSE
+        CASE data OF ORD('['), ORD(']'), ORD('^'): w.c('^') ELSE END;
+        w.u(data)
+      END
+    ELSIF next MOD 4 = a.Link THEN
+      w.c('['); DumpTree(data); w.c(']')
+    ELSE
+      w.Fail("Unexpected atom kind in DumpTree")
+    END;
+    link := next
+  END;
+END DumpTree;
 
 
 BEGIN
-  w.sl("Adapt (Algorithms, Data And Prefix Trees) - test harness.");
+  w.sl("Adapt (Algorithms, Data And a Prefix Tree) - test harness.");
 
   w.Assert(SYSTEM.VAL(a.Cell, NIL) = 0, "Expected NIL to be zero.");
   w.s("Address size is "); w.i(SIZE(a.Cell)*8); w.sl(" bits.");
@@ -55,6 +75,8 @@ BEGIN
   interpreter.DumpStack(interpreter.ArgStack);
 
   w.l; w.sl("Usage after bootstrap executed:"); DumpStats;
+
+  w.l; w.sl("Final value of Z:"); DumpTree(a.IntrinsicVariable[25]); w.l;
 
   (*
   reorganise.Collect;
