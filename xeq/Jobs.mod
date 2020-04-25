@@ -37,41 +37,36 @@ aCharMatch = POINTER TO CharMatch;  CharMatch = RECORD (Match) ch: i64          
 
 PROCEDURE (VAR o: Obj) Reset;             BEGIN                                    END Reset;
 PROCEDURE (VAR o: Obj) Next;              BEGIN                                    END Next;
-PROCEDURE (VAR o: Obj) End():  BOOLEAN;   BEGIN RETURN FALSE                       END End;
 PROCEDURE (VAR o: Obj) More(): BOOLEAN;   BEGIN RETURN FALSE                       END More;
 PROCEDURE (VAR o: Obj) Val():  i64;       BEGIN w.Fail("Abstract Obj.Val called.") END Val;
 
 PROCEDURE (VAR i: Int) Val(): i64;        BEGIN RETURN i.i END Val;
 PROCEDURE (VAR i: Int) Init(n: i64);      BEGIN i.i := n   END Init;
 
-PROCEDURE (VAR i: Iota) Reset;            BEGIN i.cur := i.first                             END Reset;
-PROCEDURE (VAR i: Iota) Next;             BEGIN IF i.cur < i.lim THEN INC(i.cur, i.inc) END  END Next;
-PROCEDURE (VAR i: Iota) End():  BOOLEAN;  BEGIN RETURN i.cur >= i.lim                        END End;
-PROCEDURE (VAR i: Iota) More(): BOOLEAN;  BEGIN RETURN i.cur + i.inc < i.lim                 END More;
-PROCEDURE (VAR i: Iota) Val():  i64;      BEGIN w.Assert(i.cur < i.lim, ""); RETURN i.cur    END Val;
-PROCEDURE (VAR i: Iota) Init(f,n,l: i64); BEGIN i.first:=f; i.inc:=n; i.lim:=l; i.Reset      END Init;
+PROCEDURE (VAR i: Iota) Reset;            BEGIN i.cur := i.first                          END Reset;
+PROCEDURE (VAR i: Iota) Next;             BEGIN IF i.More() THEN INC(i.cur, i.inc) END    END Next;
+PROCEDURE (VAR i: Iota) More(): BOOLEAN;  BEGIN RETURN i.cur + i.inc < i.lim              END More;
+PROCEDURE (VAR i: Iota) Val():  i64;      BEGIN w.Assert(i.cur < i.lim, ""); RETURN i.cur END Val;
+PROCEDURE (VAR i: Iota) Init(f,n,l: i64); BEGIN i.first:=f; i.inc:=n; i.lim:=l; i.Reset   END Init;
 
 PROCEDURE (VAR r: Repeat) Reset;                BEGIN r.p.Reset;  r.cur := 0                   END Reset;
-PROCEDURE (VAR r: Repeat) End():  BOOLEAN;      BEGIN RETURN r.cur >= r.count                  END End;
 PROCEDURE (VAR r: Repeat) More(): BOOLEAN;      BEGIN RETURN (r.cur+1 < r.count) OR r.p.More() END More;
 PROCEDURE (VAR r: Repeat) Val():  i64;          BEGIN RETURN r.p.Val()                         END Val;
 PROCEDURE (VAR r: Repeat) Init(p: Ref; c: i64); BEGIN  r.p := p;  r.count := c;  r.Reset       END Init;
 PROCEDURE (VAR r: Repeat) Next;
-BEGIN IF r.cur < r.count THEN
+BEGIN IF r.More() THEN
   IF r.p.More() THEN  r.p.Next  ELSE  r.p.Reset; INC(r.cur)  END
 END END Next;
 
 
 PROCEDURE (VAR l: List) Reset;            BEGIN l.cur := l.first                            END Reset;
-PROCEDURE (VAR l: List) Next;             BEGIN IF l.cur # NIL THEN l.cur := l.cur.next END END Next;
-PROCEDURE (VAR l: List) End():  BOOLEAN;  BEGIN RETURN l.cur # NIL                          END End;
 PROCEDURE (VAR l: List) More(): BOOLEAN;  BEGIN RETURN l.cur.next # NIL                     END More;
+PROCEDURE (VAR l: List) Next;             BEGIN IF l.More() THEN l.cur := l.cur.next END END Next;
 PROCEDURE (VAR l: List) Val():  i64;      BEGIN RETURN l.cur(anInt).i                       END Val;
 PROCEDURE (VAR l: List) Init(i: Ref);     BEGIN l.first := i; l.Reset                       END Init;
 
 PROCEDURE (VAR m: Monadic) Reset;           BEGIN m.p.Reset            END Reset;
 PROCEDURE (VAR m: Monadic) Next;            BEGIN m.p.Next             END Next;
-PROCEDURE (VAR m: Monadic) End():  BOOLEAN; BEGIN RETURN m.p.End()     END End;
 PROCEDURE (VAR m: Monadic) More(): BOOLEAN; BEGIN RETURN m.p.More()    END More;
 PROCEDURE (VAR m: Monadic) Val():  i64;
 VAR  i: i64;
@@ -83,10 +78,9 @@ END Val;
 PROCEDURE (VAR m: Monadic) Init(p: Ref; op: i64);
 BEGIN  m.p := p;  m.op := op  END Init;
 
-PROCEDURE (VAR d: Dyadic) Reset;           BEGIN d.p1.Reset; d.p2.Reset           END Reset;
-PROCEDURE (VAR d: Dyadic) Next;            BEGIN d.p1.Next; d.p2.Next             END Next;
-PROCEDURE (VAR d: Dyadic) End():  BOOLEAN; BEGIN RETURN d.p1.End() OR d.p2.End()  END End;
-PROCEDURE (VAR d: Dyadic) More(): BOOLEAN; BEGIN RETURN d.p1.More() & d.p2.More() END More;
+PROCEDURE (VAR d: Dyadic) Reset;           BEGIN d.p1.Reset; d.p2.Reset            END Reset;
+PROCEDURE (VAR d: Dyadic) Next;            BEGIN d.p1.Next; d.p2.Next              END Next;
+PROCEDURE (VAR d: Dyadic) More(): BOOLEAN; BEGIN RETURN d.p1.More() OR d.p2.More() END More;
 PROCEDURE (VAR d: Dyadic) Val():  i64;
 VAR  i1, i2: i64;
 BEGIN  i1 := d.p1.Val();  i2 := d.p2.Val();
@@ -122,9 +116,16 @@ BEGIN
   i := beg;  l.Init(n);
   LOOP
     IF i >= end THEN w.sl("Lookup reached end of string."); EXIT END;
-    IF l.End()  THEN w.sl("Lookup reached end of list."); EXIT END;
     IF l.IsMatch() THEN
-      IF l.Matches(ORD(s[i])) THEN INC(i); l.Next ELSE l.Alt END
+      IF l.Matches(ORD(s[i])) THEN
+        IF l.More() THEN
+          INC(i); l.Next
+        ELSE
+          w.sl("Lookup matched character but no more in sequence."); EXIT
+        END
+      ELSE
+        l.Alt
+      END
     ELSE
       w.sl("Lookup reached non-match node."); EXIT
     END
@@ -156,18 +157,18 @@ VAR
   m:        aMonadic;
   r:        aRepeat;
 BEGIN  NEW(i1);  NEW(i2);  NEW(a);  NEW(io1);  NEW(io2);  NEW(m);  NEW(r);
-  i1.Init(10);                           Print(i1);   w.l; (* 10                          *)
-  i2.Init(2);                            Print(i2);   w.l; (* 2                           *)
-  a.Init(i1, i2, Add);                   Print(a);    w.l; (* 12                          *)
-  io1.Init(0, 1, 5);                     Print(io1);  w.l; (* 0 1 2 3 4                   *)
-                                         Print(io1);  w.l; (* 0 1 2 3 4                   *)
-  r.Init(io1, 2);                        Print(r);    w.l; (* 0 1 2 3 4 0 1 2 3 4         *)
-  r.Init(i1, 99);  a.Init(r, io1, Add);  Print(a);    w.l; (* 10 11 12 13 14              *)
-  io1.Init(0, 1, 6);                     Print(io1);  w.l; (* 0 1 2 3 4 5                 *)
-  io2.Init(10, 10, 100);                 Print(io2);  w.l; (* 10 20 30 40 50 60 70 80 90  *)
-  a.Init(io1, io2, Add);                 Print(a);    w.l; (* 10 21 32 43 54 65           *)
-  m.Init(io1, Sqr);                      Print(m);    w.l; (* 0 1 4 9 16 25               *)
-  a.Init(m, io2, Add);                   Print(a);    w.l; (* 10 21 34 49 66 85           *)
+  i1.Init(10);                           Print(i1);   w.l; (* 10                           *)
+  i2.Init(2);                            Print(i2);   w.l; (* 2                            *)
+  a.Init(i1, i2, Add);                   Print(a);    w.l; (* 12                           *)
+  io1.Init(0, 1, 5);                     Print(io1);  w.l; (* 0 1 2 3 4                    *)
+                                         Print(io1);  w.l; (* 0 1 2 3 4                    *)
+  r.Init(io1, 2);                        Print(r);    w.l; (* 0 1 2 3 4 0 1 2 3 4          *)
+  r.Init(i1, 8);  a.Init(r, io1, Add);   Print(a);    w.l; (* 10 11 12 13 14 14 14 14      *)
+  io1.Init(0, 1, 6);                     Print(io1);  w.l; (* 0 1 2 3 4 5                  *)
+  io2.Init(10, 10, 100);                 Print(io2);  w.l; (* 10 20 30 40 50 60 70 80 90   *)
+  a.Init(io1, io2, Add);                 Print(a);    w.l; (* 10 21 32 43 54 65 75 85 95   *)
+  m.Init(io1, Sqr);                      Print(m);    w.l; (* 0 1 4 9 16 25                *)
+  a.Init(m, io2, Add);                   Print(a);    w.l; (* 10 21 34 49 66 85 95 105 115 *)
 
   TestMatch
 END Test;
