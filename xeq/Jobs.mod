@@ -95,6 +95,7 @@ BEGIN  d.p1 := p1;  d.p2 := p2;  d.op := op  END Init;
 PROCEDURE (VAR m: Match) Matches(c: i64): BOOLEAN; BEGIN w.Fail("Abstract Match.Matches() called.") END Matches;
 
 PROCEDURE (VAR l: List) IsMatch(): BOOLEAN;       BEGIN RETURN l.cur IS aMatch           END IsMatch;
+PROCEDURE (VAR l: List) HasAlt():  BOOLEAN;       BEGIN RETURN l.cur(aMatch).alt # NIL   END HasAlt;
 PROCEDURE (VAR l: List) Alt;                      BEGIN l.cur := l.cur(aMatch).alt       END Alt;
 PROCEDURE (VAR l: List) Matches(c: i64): BOOLEAN; BEGIN RETURN l.cur(aMatch).Matches(c)  END Matches;
 
@@ -124,7 +125,11 @@ BEGIN
           w.sl("Lookup matched character but no more in sequence."); EXIT
         END
       ELSE
-        l.Alt
+        IF l.HasAlt() THEN
+          l.Alt
+        ELSE
+          w.sl("Lookup failed to match character and no alternative."); EXIT
+        END
       END
     ELSE
       w.sl("Lookup reached non-match node."); EXIT
