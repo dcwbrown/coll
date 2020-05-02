@@ -1,4 +1,4 @@
-MODULE test;  IMPORT w, Codespace, Codegen, (* Functions *) Jobs, Prefix, SYSTEM;
+MODULE test;  IMPORT w, Codespace, Codegen, (* Functions *) Jobs, SYSTEM;
 
 
 (* Register numbers:
