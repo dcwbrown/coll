@@ -1,8 +1,15 @@
 MODULE Jobs;  IMPORT w, Codespace, Codegen, SYSTEM;
 
 CONST
-Add = 0; Sub = 1; Mul = 2; Div = 3;
-Neg = 4; Not = 5; Sqr = 6;
+  Trace = FALSE;
+
+  (* Operations *)
+  Non = 0;
+  (* Monadic *)
+  Idn = 1; Neg = 2; Not = 3; Sqr = 4; Iot = 5;
+  (* Dyadic *)
+  Add = 6; Sub = 7; Mul = 8; Div = 9; Rep = 10;
+  OpLimit = 11;
 
 (*  All objects behave as feeds, supporting the following functions:
       Reset   - reposition to first item
@@ -22,11 +29,13 @@ aMonadic   = POINTER TO Monadic;    Monadic   = RECORD (Obj) p: Ref; op: i64    
 aDyadic    = POINTER TO Dyadic;     Dyadic    = RECORD (Obj) p1, p2: Ref; op: i64    END;
 anIota     = POINTER TO Iota;       Iota      = RECORD (Obj) cur, lim: i64           END;
 aRepeat    = POINTER TO Repeat;     Repeat    = RECORD (Obj) p: Ref; cur, count: i64 END;
-aString    = POINTER TO String;     String    = RECORD (Obj) l: i64; s: Str          END;
+aString    = POINTER TO String;     String    = RECORD (Obj) cur: i64; s: Str        END;
 aMatch     = POINTER TO Match;      Match     = RECORD (Obj) next, alt: aMatch       END;
 aNonLetter = POINTER TO NonLetter;  NonLetter = RECORD (Match)                       END;
 aCharMatch = POINTER TO CharMatch;  CharMatch = RECORD (Match) ch: i64               END;
 aPattern   = POINTER TO Pattern;    Pattern   = RECORD (Obj) first, cur: Ref         END;
+
+VAR OpLevel: ARRAY OpLimit OF i64;
 
 PROCEDURE (VAR o: Obj) Reset;             BEGIN                                    END Reset;
 PROCEDURE (VAR o: Obj) Advance;           BEGIN                                    END Advance;
@@ -40,7 +49,7 @@ PROCEDURE (VAR i: Iota) Reset;            BEGIN i.cur := 0                      
 PROCEDURE (VAR i: Iota) Advance;          BEGIN IF i.More() THEN INC(i.cur) END END Advance;
 PROCEDURE (VAR i: Iota) More(): BOOLEAN;  BEGIN RETURN i.cur+1 < i.lim          END More;
 PROCEDURE (VAR i: Iota) Val():  i64;      BEGIN RETURN i.cur                    END Val;
-PROCEDURE (VAR i: Iota) Init(l: i64);     BEGIN i.lim:=l;  i.Reset              END Init;
+PROCEDURE (VAR i: Iota) Init(l: Ref);     BEGIN i.lim := l.Val();  i.Reset      END Init;
 
 PROCEDURE (VAR r: Repeat) Reset;                BEGIN r.p.Reset;  r.cur := 0                   END Reset;
 PROCEDURE (VAR r: Repeat) More(): BOOLEAN;      BEGIN RETURN (r.cur+1 < r.count) OR r.p.More() END More;
@@ -183,7 +192,7 @@ BEGIN i := 0;  top := -1;
       |'*': NEW(dya); dya.Init(stk[top-1], stk[top], Mul);  DEC(top); stk[top] := dya
       |'/': NEW(dya); dya.Init(stk[top-1], stk[top], Div);  DEC(top); stk[top] := dya
       |'#': NEW(rep); rep.Init(stk[top-1], stk[top].Val()); DEC(top); stk[top] := rep
-      |'i': NEW(iot); iot.Init(stk[top].Val());  stk[top] := iot
+      |'i': NEW(iot); iot.Init(stk[top]);                             stk[top] := iot
       |00X: (* w.sl("(zero)"); *)
       |' ': (* w.sl("(space)"); *)
       ELSE  w.s("Unexpected character '"); w.c(s[i]); w.s("' in RpnParse input."); w.Fail('');
@@ -195,6 +204,174 @@ BEGIN i := 0;  top := -1;
   RETURN stk[top]
 END RpnParse;
 
+
+PROCEDURE PriorityParse(s: ARRAY OF CHAR): Ref;
+VAR i: i64;
+
+  PROCEDURE ts;  (* Trace string *)
+  VAR j: i64;
+  BEGIN j := i;
+    w.s('"');
+    WHILE (j < LEN(s)) & (s[j] # 0X) DO w.c(s[j]); INC(j) END;
+    w.s('"')
+  END ts;
+
+  PROCEDURE skipSpace;
+  BEGIN
+    WHILE (i < LEN(s)) & (s[i] <= ' ') DO INC(i) END
+  END skipSpace;
+
+  PROCEDURE expect(c: CHAR);
+  BEGIN skipSpace;
+    w.Assert((i < LEN(s)) & (s[i] = c), "Unexpected character in PriorityParse");
+    INC(i)
+  END expect;
+
+  PROCEDURE^ ParseDyadic(priority: i64): Ref;
+
+  PROCEDURE ParseIntegerLiteral(): Ref;
+  VAR  acc: i64;  int: anInt;
+  BEGIN  acc := 0;
+    WHILE (i < LEN(s)) & (s[i] >= '0') & (s[i] <= '9') DO
+      acc := acc*10 + ORD(s[i]) - ORD('0');
+      INC(i);
+    END;
+    NEW(int);  int.i := acc;
+  RETURN int END ParseIntegerLiteral;
+
+  PROCEDURE ParseOperand(): Ref;
+  VAR  result: Ref;
+  BEGIN
+    skipSpace;  w.Assert(i < LEN(s), "Nothing left for ParseOperand.");
+    IF s[i] = '(' THEN
+      INC(i);
+      result := ParseDyadic(0);
+      expect(')')
+    ELSIF (s[i] >= '0') & (s[i] <= '9') THEN
+      result := ParseIntegerLiteral();
+    ELSE
+      w.Fail("Nothing suitable for ParseOperand.");
+    END;
+  RETURN result END ParseOperand;
+
+  PROCEDURE ParseMonadic(): Ref;
+  VAR  result: Ref;  op: i64;  mon: aMonadic;  iot: anIota;
+  BEGIN  op := Non;
+    skipSpace;
+    IF Trace THEN w.s("ParseMonadic "); ts; w.sl(".") END;
+    IF i < LEN(s) THEN
+      CASE s[i] OF
+      |"+": op := Idn
+      |"-": op := Neg
+      |"i": op := Iot
+      ELSE
+      END
+    END;
+    IF op = Non THEN
+      result := ParseOperand()
+    ELSE
+      INC(i);
+      CASE op OF
+      |Idn: result := ParseMonadic()
+      |Neg: NEW(mon);  mon.Init(ParseMonadic(), Neg);  result := mon
+      |Iot: NEW(iot);  iot.Init(ParseMonadic());       result := iot
+      ELSE  result := ParseOperand()
+      END
+    END;
+  RETURN result END ParseMonadic;
+
+  (*  ParseDyadicOperator
+      Skips spaces
+
+      If the next character is               Returns
+      ------------------------               -------
+      not an operator                        Non, doesn't advance.
+      an operator at a lower priority        Non, doesn't advance
+      an operator at >= requested priority   The operation, does advance
+  *)
+  PROCEDURE ParseDyadicOperator(priority: i64): i64;
+  VAR result: i64;
+  BEGIN
+    IF Trace THEN w.s("  ParseDyadicOperator <"); w.i(priority); w.s(">: "); ts; END;
+    result := Non;
+    skipSpace;
+    IF i < LEN(s) THEN
+      CASE s[i] OF
+      |'+': result := Add
+      |'-': result := Sub
+      |'*': result := Mul
+      |'/': result := Div
+      |'r': result := Rep
+      ELSE
+      END;
+      IF result # Non THEN
+        IF    OpLevel[result] < priority THEN
+          result := Non
+        ELSE
+          INC(i)
+        END
+      END
+    END;
+    IF Trace THEN
+      w.s(", result: ");
+      CASE result OF
+      |Non: w.s("Non")
+      |Add: w.s("Add")
+      |Sub: w.s("Sub")
+      |Mul: w.s("Mul")
+      |Div: w.s("Div")
+      |Rep: w.s("Rep")
+      ELSE w.i(result)
+      END;
+      w.sl(".")
+    END;
+  RETURN result END ParseDyadicOperator;
+
+  PROCEDURE MakeDyadic(left, right: Ref; op: i64): Ref;
+  VAR  dya: aDyadic;  rep: aRepeat;  result: Ref;
+  BEGIN
+    CASE op OF
+    |Add, Sub, Mul, Div:
+      NEW(dya);  dya.Init(left, right, op);  result := dya
+    |Rep:
+      NEW(rep);  rep.Init(left, right.Val());  result := rep
+    ELSE w.Fail("Unexpected op passed to MakeDyadic")
+    END;
+  RETURN result END MakeDyadic;
+
+  PROCEDURE ParseDyadic(priority: i64): Ref;
+  VAR  op: i64;  left, right: Ref;  dya: aDyadic;
+  BEGIN
+    IF Trace THEN w.s("ParseDyadic <"); w.i(priority); w.s(">: "); ts; w.sl(".") END;
+    left := ParseMonadic();
+    op := ParseDyadicOperator(priority);
+    WHILE op # Non DO
+      right := ParseDyadic(OpLevel[op]+1);
+      left := MakeDyadic(left, right, op);
+      op := ParseDyadicOperator(priority)
+    END;
+    IF Trace THEN w.s("ParseDyadic complete, leaving"); ts; w.sl(".") END;
+  RETURN left END ParseDyadic;
+
+BEGIN i := 0;
+  IF Trace THEN w.s('PriorityParse("'); w.s(s); w.sl('").') END;
+  RETURN ParseDyadic(0)
+END PriorityParse;
+
+PROCEDURE StringLength(s: ARRAY [1] OF CHAR): i64;
+VAR i: i64;
+BEGIN i := 0;
+  WHILE (i < LEN(s)) & (s[i] # 0X) DO INC(i) END;
+RETURN i END StringLength;
+
+PROCEDURE TestPriorityParse(s: ARRAY OF CHAR);
+VAR i: i64;
+BEGIN
+  w.s("  "); w.s(s); w.nb; w.s(": ");
+  i := StringLength(s);
+  WHILE i < 15 DO w.c(' '); INC(i) END;
+  Print(PriorityParse(s)); w.l;
+END TestPriorityParse;
 
 PROCEDURE Test*;
 VAR o: Ref;
@@ -214,6 +391,24 @@ BEGIN
 
   TestMatch;
 
+  TestPriorityParse("1+2-(5-1)");
+  TestPriorityParse("1+2*3");
+  TestPriorityParse("1+2*i4");
+  TestPriorityParse("1+i4*2");
+  TestPriorityParse("i4r3");
+
 END Test;
 
+BEGIN
+  OpLevel[0]  := 0;  (*  *)
+  OpLevel[1]  := 0;  (* Idn *)
+  OpLevel[2]  := 0;  (* Neg *)
+  OpLevel[3]  := 0;  (* Not *)
+  OpLevel[4]  := 0;  (* Sqr *)
+  OpLevel[5]  := 0;  (* Iot *)
+  OpLevel[6]  := 0;  (* Add *)
+  OpLevel[7]  := 0;  (* Sub *)
+  OpLevel[8]  := 1;  (* Mul *)
+  OpLevel[9]  := 1;  (* Div *)
+  OpLevel[10] := 2;  (* Rep *)
 END Jobs.
