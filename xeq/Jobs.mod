@@ -1,138 +1,112 @@
 MODULE Jobs;  IMPORT w, Codespace, Codegen, SYSTEM;
 
 CONST
-  Trace = FALSE;
-
   (* Object kinds *)
-  Nobj     = 0;                    (* None                            *)
-  Integer  = 1;                    (* a singleton integer value       *)
-  Iota     = 3;   IotaStep   = 4;  (* a vector of 0 up to a limit     *)
-  Repeat   = 5;   RepeatStep = 6;  (* repeats a source multiple times *)
-  Negate   = 7;   Invert     = 8;  (* monadic operators               *)
-  Square   = 9;                    (* monadic operators               *)
-  Add      = 10;  Subtract   = 11; (* dyadic operators                *)
-  Multiply = 12;  Divide     = 13; (* dyadic operators                *)
-  ObjLimit = 14;
+  Nobj     = 0;                  (* None                            *)
+  Integer  = 1;                  (* a singleton integer value       *)
+  Iota     = 2;                  (* a vector of 0 up to a limit     *)
+  Repeat   = 3;                  (* repeats a source multiple times *)
+  Negate   = 4;   Invert   = 5;  (* monadic operators               *)
+  Square   = 6;                  (* monadic operators               *)
+  Add      = 7;   Subtract = 8;  (* dyadic operators                *)
+  Multiply = 9;   Divide   = 10; (* dyadic operators                *)
+  ObjLimit = 11;
 
+  (* Special integer value placeholder for lazy evaluation *)
+  Pending = MIN(SYSTEM.INT64);
 
 TYPE
   Int = SYSTEM.INT64;
-
   Ref = POINTER TO Obj;
-
-  Obj = RECORD
-    kind:           Int;
-    left, right:    Ref;
-    current, limit: Int;
-  END;
-
-(*  All objects behave as feeds, supporting the following functions:
-      Reset   - reposition to first item
-      More    - whether there are more items beyond the current item.
-      Advance - advance to the Advance item, or to End if no more.
-*)
+  Obj = RECORD  kind: Int;  left, right: Ref;  current, last: Int  END;
 
 PROCEDURE Reset(r: Ref);
-BEGIN CASE r.kind OF
-|RepeatStep: r.kind := Repeat;  Reset(r.left)
-|IotaStep:   r.kind := Iota
-ELSE
-END END Reset;
+BEGIN IF r # NIL THEN r.current := 0;  Reset(r.left);  Reset(r.right) END
+END Reset;
 
 PROCEDURE Value(r: Ref): Int;
 BEGIN CASE r.kind OF
-|Integer:    RETURN r.current
-|Repeat:     RETURN Value(r.left)
-|RepeatStep: RETURN Value(r.left)
-|Iota:       RETURN 0;
-|IotaStep:   RETURN r.current
-|Negate:     RETURN -Value(r.left)
-|Invert:     RETURN -Value(r.left)-1
-|Square:     RETURN Value(r.left) * Value(r.left)
-|Add:        RETURN Value(r.left) + Value(r.right)
-|Subtract:   RETURN Value(r.left) - Value(r.right)
-|Multiply:   RETURN Value(r.left) * Value(r.right)
-|Divide:     RETURN Value(r.left) DIV Value(r.right)
+|Integer:  RETURN r.last
+|Repeat:   RETURN Value(r.left)
+|Iota:     RETURN r.current
+|Negate:   RETURN -Value(r.left)
+|Invert:   RETURN -Value(r.left) - 1
+|Square:   RETURN Value(r.left)  *  Value(r.left)
+|Add:      RETURN Value(r.left)  +  Value(r.right)
+|Subtract: RETURN Value(r.left)  -  Value(r.right)
+|Multiply: RETURN Value(r.left)  *  Value(r.right)
+|Divide:   RETURN Value(r.left) DIV Value(r.right)
 ELSE
 END END Value;
 
 PROCEDURE More(r: Ref): BOOLEAN;
-BEGIN CASE r.kind OF
-|Negate,
- Invert,
- Square:     RETURN More(r.left)
-|Add,
- Subtract,
- Multiply,
- Divide:     RETURN More(r.left) OR More(r.right)
-|Iota:       RETURN r.limit > 1
-|IotaStep:   RETURN r.current+1 < r.limit
-|Repeat:     RETURN (r.limit > 1) OR More(r.left)
-|RepeatStep: RETURN (r.current + 1 < r.limit) OR More(r.left)
-ELSE RETURN FALSE
-END END More;
+BEGIN
+  IF r # NIL THEN
+    IF r.last = Pending THEN r.last := Value(r.right)-1; r.right := NIL END;
+    CASE r.kind OF
+    |Negate, Invert, Square, Add, Subtract, Multiply, Divide:
+             RETURN More(r.left) OR More(r.right)
+    |Iota:   RETURN r.current < r.last
+    |Repeat: RETURN (r.current < r.last) OR More(r.left)
+    ELSE
+    END
+  END;
+RETURN FALSE END More;
 
 PROCEDURE Advance(r: Ref);
-BEGIN CASE r.kind OF
-|Negate,
- Invert,
- Square:     IF More(r.left) THEN Advance(r.left) END
-|Add,
- Subtract,
- Multiply,
- Divide:     IF More(r.left)  THEN Advance(r.left)  END;
-             IF More(r.right) THEN Advance(r.right) END
-|Iota:       IF More(r) THEN r.current := 1;  r.kind := IotaStep END
-|IotaStep:   IF More(r) THEN INC(r.current) END
-|Repeat:     IF More(r.left) THEN
-               r.kind := RepeatStep;  r.current := 0;  Advance(r.left)
-             ELSIF r.limit > 1 THEN
-               r.kind := RepeatStep;  r.current := 1
-             END
-|RepeatStep: IF More(r.left) THEN
-               Advance(r.left)
-             ELSIF r.current + 1 < r.limit THEN
-               Reset(r.left);  INC(r.current)
-             END
-ELSE
-END END Advance;
+BEGIN
+  w.Assert(r.last # Pending, "Advance called with r.last unexpectedly pending, More() should have been called first.");
+  CASE r.kind OF
+  |Negate, Invert, Square, Add, Subtract, Multiply, Divide:
+           IF More(r.left)  THEN Advance(r.left)  END;
+           IF More(r.right) THEN Advance(r.right) END
+  |Iota:   IF r.current < r.last THEN INC(r.current) END
+  |Repeat: IF More(r.left) THEN
+             Advance(r.left)
+           ELSIF r.current < r.last THEN
+             Reset(r.left);  INC(r.current)
+           END
+  ELSE
+  END
+END Advance;
 
 PROCEDURE Print(r: Ref);
 BEGIN  Reset(r);  w.i(Value(r));
   WHILE More(r) DO Advance(r); w.i(Value(r)) END
 END Print;
 
+PROCEDURE MakeObj(kind: Int; left, right: Ref; last: Int): Ref;
+VAR r: Ref;
+BEGIN NEW(r);
+  r.kind := kind;
+  r.left := left;  r.right := right;
+  r.current := 0;  r.last  := last;
+RETURN r; END MakeObj;
+
 PROCEDURE RpnParse(s: ARRAY OF CHAR): Ref;
-VAR
-  i:   Int;
-  r:   Ref;
-  stk: ARRAY 3 OF Ref;
-  top: Int;
-  acc: Int;
+VAR r: Ref;  acc, i, top: Int;  stk: ARRAY 3 OF Ref;
+  PROCEDURE Push(r: Ref); BEGIN INC(top); stk[top] := r     END Push;
+  PROCEDURE Pop(): Ref;   BEGIN DEC(top); RETURN stk[top+1] END Pop;
 BEGIN i := 0;  top := -1;
   WHILE i < LEN(s) DO
-    (* w.s("('"); w.c(s[i]); w.sl("')"); *)
     IF (s[i] >= '0') & (s[i] <= '9') THEN
       acc := ORD(s[i]) - ORD('0'); INC(i);
       WHILE (i < LEN(s)) & (s[i] >= '0') & (s[i] <= '9') DO
-        acc := acc*10 + ORD(s[i]) - ORD('0');
-        INC(i)
+        acc := acc*10 + ORD(s[i]) - ORD('0');  INC(i)
       END;
-      NEW(r);  r.kind := Integer;  r.current := acc;
-      INC(top); stk[top] := r;
+      NEW(r);  r.kind := Integer;  r.current := 0;  r.last := acc;  Push(r);
     ELSE
       CASE s[i] OF
-      |'n': NEW(r); r.kind := Negate;   r.left := stk[top];                                         stk[top] := r
-      |'~': NEW(r); r.kind := Invert;   r.left := stk[top];                                         stk[top] := r
-      |'s': NEW(r); r.kind := Square;   r.left := stk[top];                                         stk[top] := r
-      |'+': NEW(r); r.kind := Add;      r.left := stk[top-1]; r.right := stk[top];        DEC(top); stk[top] := r
-      |'-': NEW(r); r.kind := Subtract; r.left := stk[top-1]; r.right := stk[top];        DEC(top); stk[top] := r
-      |'*': NEW(r); r.kind := Multiply; r.left := stk[top-1]; r.right := stk[top];        DEC(top); stk[top] := r
-      |'/': NEW(r); r.kind := Divide;   r.left := stk[top-1]; r.right := stk[top];        DEC(top); stk[top] := r
-      |'#': NEW(r); r.kind := Repeat;   r.left := stk[top-1]; r.limit := Value(stk[top]); DEC(top); stk[top] := r
-      |'i': NEW(r); r.kind := Iota;                           r.limit := Value(stk[top]);           stk[top] := r
-      |00X: (* w.sl("(zero)"); *)
-      |' ': (* w.sl("(space)"); *)
+      |'n': Push(MakeObj(Negate,   Pop(), NIL,   0))
+      |'~': Push(MakeObj(Invert,   Pop(), NIL,   0))
+      |'s': Push(MakeObj(Square,   Pop(), NIL,   0))
+      |'+': Push(MakeObj(Add,      Pop(), Pop(), 0))
+      |'-': Push(MakeObj(Subtract, Pop(), Pop(), 0))
+      |'*': Push(MakeObj(Multiply, Pop(), Pop(), 0))
+      |'/': Push(MakeObj(Divide,   Pop(), Pop(), 0))
+      |'#': Push(MakeObj(Repeat,   Pop(), Pop(), Pending))
+      |'i': Push(MakeObj(Iota,     NIL,   Pop(), Pending))
+      |' ', 00X:
       ELSE  w.s("Unexpected character '"); w.c(s[i]); w.s("' in RpnParse input."); w.Fail('');
       END;
       INC(i)
