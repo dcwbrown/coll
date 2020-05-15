@@ -2,18 +2,36 @@ MODULE Jobs;  IMPORT w, Codespace, Codegen, SYSTEM;
 
 CONST
   (* Object kinds *)
-  Nobj     = 0;                  (* None                               *)
-  Integer  = 1;                  (* a singleton integer value          *)
-  Iota     = 2;                  (* a vector of 0 up to a limit        *)
-  Repeat   = 3;                  (* repeats a source multiple times    *)
-  Negate   = 4;   Not      = 5;  (* monadic operators                  *)
-  Square   = 6;   Identity = 7;  (* monadic operators                  *)
-  Add      = 8;   Subtract = 9;  (* dyadic operators                   *)
-  Multiply = 10;  Divide   = 11; (* dyadic operators                   *)
-  Over     = 12;                 (* Applicator                         *)
-  List     = 13;                 (* left->current link, right->first   *)
-  Link     = 14;                 (* val: left^ or current, next: right *)
-  ObjLimit = 15;
+  Nobj     = 0;                  (* None                                *)
+  Integer  = 1;                  (* a singleton integer value           *)
+  Iota     = 2;                  (* a vector of 0 up to a limit         *)
+  Repeat   = 3;                  (* repeats a source multiple times     *)
+  Negate   = 4;   Not      = 5;  (* monadic operators                   *)
+  Square   = 6;   Identity = 7;  (* monadic operators                   *)
+  Add      = 8;   Subtract = 9;  (* dyadic operators                    *)
+  Multiply = 10;  Divide   = 11; (* dyadic operators                    *)
+  Over     = 12;                 (* Applicator                          *)
+  Stepper  = 13;                 (* Steps through algorithmic sequences *)
+  ObjLimit = 14;
+
+  (*
+
+  ============ object ============      =========== stepper ============
+  Kind       p1      p2      i          p1          p2         i
+  --------   -----   -----   -----      ---------   --------   ---------
+  Integer    next    /       value      first int   curr int   /
+  Iota       parm    /       max        Iota        /          curr val
+  Repeat     parm1   parm2   max        Repeat      /          curr iter
+  Negate     parm    /       /
+  Not        parm    /       /
+  Square     parm    /       /
+  Add        parm1   parm2   /
+  Subtract   parm1   parm2   /
+  Multiply   parm1   parm2   /
+  Divide     parm1   parm2   /
+  Over       parm    /       op
+  Stepper    parm    <See sep cols>
+  *)
 
   (* Special integer value placeholder for lazy evaluation *)
   Pending = MIN(SYSTEM.INT64);
@@ -21,103 +39,117 @@ CONST
 TYPE
   Int = SYSTEM.INT64;
   Ref = POINTER TO Obj;
-  Obj = RECORD  kind: Int;  left, right: Ref;  current, last: Int  END;
+  Obj = RECORD  kind: Int;  p1, p2: Ref;  i: Int  END;
 
 VAR
   OpLevel: ARRAY ObjLimit OF Int;
   Operators: ARRAY 128 OF RECORD monadic, dyadic: Int END;
 
 
-PROCEDURE Reset(r: Ref);
-BEGIN IF r # NIL THEN CASE r.kind OF
-  |List: r.left := r.right
-  ELSE   r.current := 0;  Reset(r.left);  Reset(r.right)
-END END END Reset;
-
 PROCEDURE^ DoOver(VAR r: Ref): Int;
 
 PROCEDURE Value(r: Ref): Int;
 BEGIN CASE r.kind OF
-|Integer:  RETURN r.last
-|Repeat,
- List:     RETURN Value(r.left)
-|Link:     IF r.left # NIL
-           THEN RETURN Value(r.left)
-           ELSE RETURN r.last
-           END
-|Iota:     RETURN r.current
-|Negate:   RETURN -Value(r.left)
-|Not:      IF Value(r.left) = 0 THEN RETURN 1 ELSE RETURN 0 END
-|Square:   RETURN Value(r.left)  *  Value(r.left)
-|Add:      RETURN Value(r.left)  +  Value(r.right)
-|Subtract: RETURN Value(r.left)  -  Value(r.right)
-|Multiply: RETURN Value(r.left)  *  Value(r.right)
-|Divide:   RETURN Value(r.left) DIV Value(r.right)
+|Integer:  RETURN r.i
+|Negate:   RETURN -Value(r.p1)
+|Not:      IF Value(r.p1) = 0 THEN RETURN 1 ELSE RETURN 0 END
+|Square:   RETURN Value(r.p1)  *  Value(r.p1)
+|Add:      RETURN Value(r.p1)  +  Value(r.p2)
+|Subtract: RETURN Value(r.p1)  -  Value(r.p2)
+|Multiply: RETURN Value(r.p1)  *  Value(r.p2)
+|Divide:   RETURN Value(r.p1) DIV Value(r.p2)
 |Over:     RETURN DoOver(r);
-ELSE
+|Stepper:  CASE r.p1.kind OF
+           |Integer:  RETURN Value(r.p2)
+           |Iota:     RETURN r.i
+           |Repeat:   RETURN Value(r.p1.p1)
+           ELSE       w.Fail("Stepper linked to unsteppable.");
+           END
+ELSE w.Fail("Value() passed unexpected object kind.")
 END END Value;
+
+PROCEDURE Reset(r: Ref);
+BEGIN IF r # NIL THEN
+  IF r.kind = Stepper THEN
+    CASE r.p1.kind OF
+    |Integer:  r.p2 := r.p1
+    |Iota:     IF r.p1.i = Pending THEN r.p1.i := Value(r.p1.p1)-1 END;
+               r.i := 0;
+    |Repeat:   IF r.p1.i = Pending THEN r.p1.i := Value(r.p1.p2)-1 END;
+               Reset(r.p1.p1);  r.i := 0
+    ELSE
+    END
+  ELSE
+    Reset(r.p1);  Reset(r.p2);
+  END
+END END Reset;
 
 PROCEDURE More(r: Ref): BOOLEAN;
 BEGIN
   IF r # NIL THEN
-    IF r.last = Pending THEN  r.last := Value(r.right)-1;  r.right := NIL  END;
-    CASE r.kind OF
-    |Negate, Not, Square, Add, Subtract, Multiply, Divide:
-             RETURN More(r.left) OR More(r.right)
-    |Iota:   RETURN r.current < r.last
-    |Repeat: RETURN (r.current < r.last) OR More(r.left)
-    |List:   RETURN (r.left.kind = Link) & (r.left.right # NIL)
+    IF r.kind # Stepper THEN
+      RETURN More(r.p1) OR More(r.p2)
     ELSE
+      CASE r.p1.kind OF
+      |Integer:  RETURN r.p2.p1 # NIL
+      |Iota:     w.Assert(r.p1.i # Pending, "More called with iota stepper p1.i unexpectedly pending, Reset should have been called first.");
+                 RETURN r.i < r.p1.i
+      |Repeat:   w.Assert(r.p1.i # Pending, "More called with repeat stepper p1.i unexpectedly pending, Reset should have been called first.");
+                 RETURN (r.i < r.p1.i) OR More(r.p1)
+      ELSE       w.Fail("Stepper linked to unsteppable.");
+      END
     END
   END;
 RETURN FALSE END More;
 
 PROCEDURE Advance(r: Ref);
 BEGIN
-  w.Assert(r.last # Pending, "Advance called with r.last unexpectedly pending, More() should have been called first.");
-  CASE r.kind OF
-  |Negate, Not, Square, Add, Subtract, Multiply, Divide:
-           IF More(r.left)  THEN Advance(r.left)  END;
-           IF More(r.right) THEN Advance(r.right) END
-  |Iota:   IF r.current < r.last THEN INC(r.current) END
-  |Repeat: IF More(r.left) THEN
-             Advance(r.left)
-           ELSIF r.current < r.last THEN
-             Reset(r.left);  INC(r.current)
-           END
-  |List:   IF More(r) THEN r.left := r.left.right END
+  IF r.kind # Stepper THEN
+    IF More(r.p1)  THEN Advance(r.p1)  END;
+    IF More(r.p2) THEN Advance(r.p2) END
   ELSE
+    CASE r.p1.kind OF
+    |Integer:  IF r.p2.p1 # NIL THEN r.p2 := r.p2.p1 END
+    |Iota:     w.Assert(r.p1.i # Pending, "Advance called with iota stepper p1.i unexpectedly pending, Reset should have been called first.");
+               IF r.i < r.p1.i THEN INC(r.i) END
+    |Repeat:   w.Assert(r.p1.i # Pending, "Advance called with repeat stepper p1.i unexpectedly pending, Reset should have been called first.");
+               IF More(r.p1) THEN
+                 Advance(r.p1)
+               ELSIF r.i < r.p1.i THEN
+                 Reset(r.p1);  INC(r.i)
+               END
+    ELSE
+    END
   END
 END Advance;
 
 PROCEDURE DoOver(VAR r: Ref): Int;
 (* TODO DoOver needs to support applying any dyadic fn, including user defined. *)
 VAR acc: Int;
-BEGIN Reset(r.left);  acc := Value(r.left);
-  CASE r.last OF
-  |Add:      WHILE More(r.left) DO Advance(r.left); acc := acc  +  Value(r.left) END
-  |Subtract: WHILE More(r.left) DO Advance(r.left); acc := acc  -  Value(r.left) END
-  |Multiply: WHILE More(r.left) DO Advance(r.left); acc := acc  *  Value(r.left) END
-  |Divide:   WHILE More(r.left) DO Advance(r.left); acc := acc DIV Value(r.left) END
+BEGIN Reset(r.p1);  acc := Value(r.p1);
+  CASE r.i OF
+  |Add:      WHILE More(r.p1) DO Advance(r.p1); acc := acc  +  Value(r.p1) END
+  |Subtract: WHILE More(r.p1) DO Advance(r.p1); acc := acc  -  Value(r.p1) END
+  |Multiply: WHILE More(r.p1) DO Advance(r.p1); acc := acc  *  Value(r.p1) END
+  |Divide:   WHILE More(r.p1) DO Advance(r.p1); acc := acc DIV Value(r.p1) END
   ELSE w.Fail("Unsupported over operator.")
   END;
   RETURN acc;
 END DoOver;
 
-PROCEDURE NewObj(kind: Int; left, right: Ref; last: Int): Ref;
+PROCEDURE NewObj(kind: Int; p1, p2: Ref; i: Int): Ref;
 VAR ref: Ref;
 BEGIN w.Assert(kind # Nobj, "NewObj passed object kinf Nobj.");
   NEW(ref);
-  ref.kind := kind;  ref.left := left;  ref.right := right;
-  ref.current := 0;  ref.last  := last;
+  ref.kind := kind;  ref.p1 := p1;  ref.p2 := p2;  ref.i  := i;
 RETURN ref END NewObj;
 
 PROCEDURE NewOperator(op: Int; p1, p2: Ref): Ref;
 BEGIN CASE op OF
 |Nobj, Identity:
            RETURN p1
-|Iota:     RETURN NewObj(op, NIL, p1, Pending)
-|Repeat:   RETURN NewObj(op, p1, p2, Pending)
+|Iota:     RETURN NewObj(Stepper, NewObj(Iota,   p1, NIL, Pending), NIL, 0)
+|Repeat:   RETURN NewObj(Stepper, NewObj(Repeat, p1,  p2, Pending), NIL, 0)
 |Negate, Not, Add, Subtract, Multiply, Divide:
            RETURN NewObj(op, p1, p2, 0)
 ELSE w.Fail("Unrecognised operator in NewOperator.")
@@ -147,51 +179,45 @@ VAR i: Int;
     INC(i)
   END expect;
 
+  PROCEDURE ParseIntegers(): Ref;
+  VAR result, current: Ref;
+  BEGIN
+    result := NewObj(Integer, NIL, NIL, ParseInt(s, i));  skipSpace;
+    IF (i < LEN(s)) & (s[i] >= '0') & (s[i] <= '9') THEN
+      current := result;  result := NewObj(Stepper, current, current, 0);
+      WHILE (i < LEN(s)) & (s[i] >= '0') & (s[i] <= '9') DO
+        current.p1 := NewObj(Integer, NIL, NIL, ParseInt(s, i));
+        current := current.p1;  skipSpace
+      END
+    END;
+  RETURN result END ParseIntegers;
+
   PROCEDURE^ ParseDyadic(priority: Int): Ref;
 
   PROCEDURE ParseOperand(): Ref;
   VAR  result, link: Ref;  op, val: Int;
-  BEGIN
-    skipSpace;
-    IF s[i] = '(' THEN
-      INC(i);  result := ParseDyadic(0);  skipSpace;  expect(')');
-    ELSIF s[i] = '/' THEN
-      INC(i);  skipSpace;  op := Operators[ORD(s[i])].dyadic;
-      w.Assert(op # Nobj, "Expected dyadic operator following '/'.");
-      INC(i);  result := NewObj(Over, ParseOperand(), NIL, op)
-    ELSIF (s[i] >= '0') & (s[i] <= '9') THEN
-      val := ParseInt(s, i);  skipSpace;
-      IF (i < LEN(s)) & (s[i] >= '0') & (s[i] <= '9') THEN
-        link := NewObj(Link, NIL, NIL, val);
-        result := NewObj(List, link, link, 0);
-        WHILE (i < LEN(s)) & (s[i] >= '0') & (s[i] <= '9') DO
-          link.right := NewObj(Link, NIL, NIL, ParseInt(s, i));
-          link := link.right;
-          skipSpace
-        END
-      ELSE
-        result := NewObj(Integer, NIL, NIL, val)
-      END
-    ELSE
-      op := Operators[ORD(s[i])].monadic;
-      IF op # Nobj THEN
-        INC(i);
-        result := NewOperator(op, ParseOperand(), NIL)
-      ELSE
-        w.Fail("Nothing suitable for ParseOperand.");
-      END
+  BEGIN skipSpace;
+    CASE s[i] OF
+    |'(':      INC(i);  result := ParseDyadic(0);  skipSpace;  expect(')')
+    |'/':      INC(i);  skipSpace;  op := Operators[ORD(s[i])].dyadic;
+               w.Assert(op # Nobj, "Expected dyadic operator following '/'.");
+               INC(i);  result := NewObj(Over, ParseOperand(), NIL, op)
+    |'0'..'9': result := ParseIntegers()
+    ELSE       op := Operators[ORD(s[i])].monadic;
+               w.Assert(op # Nobj, "Nothing suitable for ParseOperand.");
+               INC(i);  result := NewOperator(op, ParseOperand(), NIL)
     END;
   RETURN result END ParseOperand;
 
   PROCEDURE ParseDyadic(priority: Int): Ref;
-  VAR  op: Int;  left: Ref;
-  BEGIN  left := ParseOperand();
+  VAR  op: Int;  p1: Ref;
+  BEGIN  p1 := ParseOperand();
     LOOP
       skipSpace;  op := Operators[ORD(s[i])].dyadic;
       IF OpLevel[op] < priority THEN EXIT END;
-      INC(i);  left := NewOperator(op, left, ParseDyadic(OpLevel[op]+1))
+      INC(i);  p1 := NewOperator(op, p1, ParseDyadic(OpLevel[op]+1))
     END;
-  RETURN left END ParseDyadic;
+  RETURN p1 END ParseDyadic;
 
 BEGIN i := 0;
   RETURN ParseDyadic(0)
@@ -201,7 +227,7 @@ END PriorityParse;
 (* ------------------------------------------------------------------------ *)
 
 PROCEDURE RpnParse(s: ARRAY OF CHAR): Ref;
-VAR r: Ref;  acc, i, top: Int;  stk: ARRAY 3 OF Ref;
+VAR r: Ref;  v, i, top: Int;  stk: ARRAY 3 OF Ref;
 
   PROCEDURE Push(r: Ref); BEGIN INC(top);  stk[top] := r    END Push;
   PROCEDURE Pop(): Ref;   BEGIN DEC(top); RETURN stk[top+1] END Pop;
@@ -219,9 +245,9 @@ BEGIN i := 0;  top := -1;
       |'-': Push(NewObj(Subtract, Pop(), Pop(), 0))
       |'*': Push(NewObj(Multiply, Pop(), Pop(), 0))
       |'/': Push(NewObj(Divide,   Pop(), Pop(), 0))
-      (*|'=': Push(NewObj(Equal,    Pop(), Pop(), 0))*)
-      |'#': Push(NewObj(Repeat,   Pop(), Pop(), Pending))
-      |'i': Push(NewObj(Iota,     NIL,   Pop(), Pending))
+      |'#': r := Pop();
+            Push(NewObj(Stepper, NewObj(Repeat, Pop(), r, Pending), NIL, 0))
+      |'i': Push(NewObj(Stepper, NewObj(Iota, Pop(), NIL, Pending), NIL, 0))
       |' ', 00X:
       ELSE  w.s("Unexpected character '"); w.c(s[i]); w.s("' in RpnParse input."); w.Fail('');
       END;
@@ -261,7 +287,9 @@ BEGIN
   TestRpnParse("2");                 (* 2                            *)
   TestRpnParse("10 2 +");            (* 12                           *)
   TestRpnParse("5i");                (* 0 1 2 3 4                    *)
+  TestRpnParse("5i 2 +");            (* 2 3 4 5 6                    *)
   TestRpnParse("1 2 #");             (* 1 1                          *)
+  TestRpnParse("3 4 + 2 #");         (* 7 7                          *)
   TestRpnParse("5i 2#");             (* 0 1 2 3 4 0 1 2 3 4          *)
   TestRpnParse("10 8# 5i +");        (* 10 11 12 13 14 14 14 14      *)
   TestRpnParse("9i 10*");            (* 0 10 20 30 40 50 60 70 80    *)
@@ -281,22 +309,26 @@ END TestPriorityParse;
 
 PROCEDURE PriorityTest;
 BEGIN
-  TestPriorityParse("1+2-(5-1)");
-  TestPriorityParse("2*3+1");
-  TestPriorityParse("1+2*3");
-  TestPriorityParse("1+2*3+4");
-  TestPriorityParse("1+2*i4");
-  TestPriorityParse("1+i4*2");
-  TestPriorityParse("i4r3");
-  TestPriorityParse("/+5");
-  TestPriorityParse("/+i5");
-  TestPriorityParse("/-i5");
-  TestPriorityParse("/*i5");
-  TestPriorityParse("/*(i5+1)");
-  TestPriorityParse("1 2 3 4");
-  TestPriorityParse("1 2 3 4 + 10");
-  TestPriorityParse("/+ 5 15 27");
+  TestPriorityParse("1+2-(5-1)");     (* -1                      *)
+  TestPriorityParse("2*3+1");         (* 7                       *)
+  TestPriorityParse("1+2*3");         (* 7                       *)
+  TestPriorityParse("1+2*3+4");       (* 11                      *)
+  TestPriorityParse("1+2*i4");        (* 1 3 5 7                 *)
+  TestPriorityParse("1+i4*2");        (* 1 3 5 7                 *)
+  TestPriorityParse("i4r3");          (* 0 1 2 3 0 1 2 3 0 1 2 3 *)
+  TestPriorityParse("/+5");           (* 5                       *)
+  TestPriorityParse("/+i5");          (* 10                      *)
+  TestPriorityParse("/-i5");          (* -10                     *)
+  TestPriorityParse("/*i5");          (* 0                       *)
+  TestPriorityParse("/*(i5+1)");      (* 120                     *)
+  TestPriorityParse("1 2 3 4");       (* 1 2 3 4                 *)
+  TestPriorityParse("1 2 3 4 r 3");   (* 1 2 3 4 1 2 3 4 1 2 3 4 *)
+  TestPriorityParse("1 2 3 4 + 10");  (* 11 12 13 14             *)
+  TestPriorityParse("/+ 5 15 27");    (* 47                      *)
 END PriorityTest;
+
+
+
 
 (* ------------------------------------------------------------------------ *)
 
