@@ -187,20 +187,33 @@ VAR i: Int;
   RETURN result END ParseIntegers;
 
   PROCEDURE ParseChar(delim: CHAR): Int;  (* returns 0 at end *)
+  VAR c, n: Int;
   BEGIN
     IF i >= LEN(s) THEN RETURN 0 END;
     IF s[i] = delim THEN
       INC(i);
       IF (i < LEN(s)) & (s[i] = delim) THEN
-        INC(i);  RETURN ORD(delim)
+        INC(i);  c := ORD(delim)
       ELSE
-        RETURN 0
+        c := 0
       END
     ELSE
-      (* TODO Handle UTF-8 here *)
-      INC(i);  RETURN ORD(s[i-1])
-    END
-  END ParseChar;
+      c := ORD(s[i]);  INC(i);
+      IF (i < LEN(s)) & (c >= 128) THEN (* Multi-byte UTF-8 encoding *)
+        IF    (c DIV 32) =  6 THEN c := c MOD 32;  n := 2
+        ELSIF (c DIV 16) = 14 THEN c := c MOD 16;  n := 3
+        ELSIF (c DIV  8) = 30 THEN c := c MOD  8;  n := 4
+        ELSE  c := 0FFFDH (* Unicode replacement character *)
+        END;
+        IF c < 32 THEN
+          WHILE (i < LEN(s)) & (n > 1) & (ORD(s[i]) >= 128) & (ORD(s[i]) < 192) DO
+            c := c * 64  +  ORD(s[i]) MOD 64;  INC(i);  DEC(n)
+          END;
+          IF n # 1 THEN c := 0FFFDH END
+        END
+      END
+    END;
+  RETURN c END ParseChar;
 
   PROCEDURE ParseString(): Ref;
   VAR  result, current: Ref;  delim: CHAR;  c: Int;
@@ -294,17 +307,22 @@ BEGIN  Reset(r);  w.i(Value(r));
   WHILE More(r) DO Advance(r); w.i(Value(r)) END
 END Print;
 
-PROCEDURE StringLength(s: ARRAY [1] OF CHAR): Int;
-VAR i: Int;
-BEGIN i := 0;
-  WHILE (i < LEN(s)) & (s[i] # 0X) DO INC(i) END;
-RETURN i END StringLength;
+PROCEDURE ColCount(s: ARRAY [1] OF CHAR): Int;
+VAR i, c: Int;
+BEGIN i := 0;  c := 0;
+  WHILE (i < LEN(s)) & (s[i] # 0X) DO
+    INC(i);  INC(c);
+    IF ORD(s[i-1]) DIV 64 = 3 THEN (* First byte of UTF-8 sequence *)
+      WHILE (i < LEN(s)) & (ORD(s[i]) >= 128) & (ORD(s[i]) < 192) DO INC(i) END
+    END;
+  END;
+RETURN c END ColCount;
 
 PROCEDURE TestRpnParse(s: ARRAY OF CHAR);
 VAR i: Int;
 BEGIN
   w.s("Rpn  "); w.s(s); w.nb; w.s("  ");
-  i := StringLength(s);  WHILE i < 18 DO w.c(' '); INC(i) END;
+  i := ColCount(s);  WHILE i < 18 DO w.c(' '); INC(i) END;
   Print(RpnParse(s)); w.l;
 END TestRpnParse;
 
@@ -331,7 +349,7 @@ PROCEDURE TestPriorityParse(s: ARRAY OF CHAR);
 VAR i: Int;
 BEGIN
   w.s("Pri  "); w.s(s); w.nb; w.s("  ");
-  i := StringLength(s);  WHILE i < 18 DO w.c(' '); INC(i) END;
+  i := ColCount(s);  WHILE i < 18 DO w.c(' '); INC(i) END;
   Print(PriorityParse(s)); w.l;
 END TestPriorityParse;
 
@@ -358,7 +376,7 @@ BEGIN
   TestPriorityParse("'123'");         (* 49 50 51                *)
   TestPriorityParse('"123"');         (* 49 50 51                *)
   TestPriorityParse('"!""#"');        (* 33 34 35                *)
-  TestPriorityParse('"¬"');
+  TestPriorityParse('"¬¦é€£"');       (* 172 166 233 8364 163    *)
 END PriorityTest;
 
 
