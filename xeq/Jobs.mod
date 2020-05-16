@@ -1,5 +1,14 @@
 MODULE Jobs;  IMPORT w, Codespace, Codegen, SYSTEM;
 
+(* Vague todos:
+   o  Distinguish integers and characters just enough
+   o  Support partial dyadic operators - where one arg is preset
+   o  Less reduction to integer maybe
+   o  Pattern matching
+   o  Named value and function definition and invocation
+   o  Nested language (and eventually, formatted output)
+*)
+
 CONST
   (* Object kinds *)
   Nobj     = 0;                  (* None                                *)
