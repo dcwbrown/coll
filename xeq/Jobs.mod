@@ -30,7 +30,7 @@ CONST
   Multiply   parm1   parm2   /
   Divide     parm1   parm2   /
   Over       parm    /       op
-  Stepper    parm    <See sep cols>
+  Stepper    <See cols to right>
   *)
 
   (* Special integer value placeholder for lazy evaluation *)
@@ -60,7 +60,7 @@ BEGIN CASE r.kind OF
 |Divide:   RETURN Value(r.p1) DIV Value(r.p2)
 |Over:     RETURN DoOver(r);
 |Stepper:  CASE r.p1.kind OF
-           |Integer:  RETURN Value(r.p2)
+           |Integer:  RETURN r.p2.i
            |Iota:     RETURN r.i
            |Repeat:   RETURN Value(r.p1.p1)
            ELSE       w.Fail("Stepper linked to unsteppable.");
@@ -70,7 +70,8 @@ END END Value;
 
 PROCEDURE Reset(r: Ref);
 BEGIN IF r # NIL THEN
-  IF r.kind = Stepper THEN
+  IF r.kind # Stepper THEN Reset(r.p1); Reset(r.p2)
+  ELSE
     CASE r.p1.kind OF
     |Integer:  r.p2 := r.p1
     |Iota:     IF r.p1.i = Pending THEN r.p1.i := Value(r.p1.p1)-1 END;
@@ -79,34 +80,27 @@ BEGIN IF r # NIL THEN
                Reset(r.p1.p1);  r.i := 0
     ELSE
     END
-  ELSE
-    Reset(r.p1);  Reset(r.p2);
   END
 END END Reset;
 
 PROCEDURE More(r: Ref): BOOLEAN;
-BEGIN
-  IF r # NIL THEN
-    IF r.kind # Stepper THEN
-      RETURN More(r.p1) OR More(r.p2)
-    ELSE
-      CASE r.p1.kind OF
-      |Integer:  RETURN r.p2.p1 # NIL
-      |Iota:     w.Assert(r.p1.i # Pending, "More called with iota stepper p1.i unexpectedly pending, Reset should have been called first.");
-                 RETURN r.i < r.p1.i
-      |Repeat:   w.Assert(r.p1.i # Pending, "More called with repeat stepper p1.i unexpectedly pending, Reset should have been called first.");
-                 RETURN (r.i < r.p1.i) OR More(r.p1)
-      ELSE       w.Fail("Stepper linked to unsteppable.");
-      END
+BEGIN IF r # NIL THEN
+  IF r.kind # Stepper THEN RETURN More(r.p1) OR More(r.p2)
+  ELSE
+    CASE r.p1.kind OF
+    |Integer:  RETURN r.p2.p1 # NIL
+    |Iota:     w.Assert(r.p1.i # Pending, "More called with iota stepper p1.i unexpectedly pending, Reset should have been called first.");
+               RETURN r.i < r.p1.i
+    |Repeat:   w.Assert(r.p1.i # Pending, "More called with repeat stepper p1.i unexpectedly pending, Reset should have been called first.");
+               RETURN (r.i < r.p1.i) OR More(r.p1)
+    ELSE       w.Fail("Stepper linked to unsteppable.");
     END
-  END;
-RETURN FALSE END More;
+  END
+END; RETURN FALSE END More;
 
 PROCEDURE Advance(r: Ref);
-BEGIN
-  IF r.kind # Stepper THEN
-    IF More(r.p1)  THEN Advance(r.p1)  END;
-    IF More(r.p2) THEN Advance(r.p2) END
+BEGIN IF r # NIL THEN
+  IF r.kind # Stepper THEN Advance(r.p1); Advance(r.p2)
   ELSE
     CASE r.p1.kind OF
     |Integer:  IF r.p2.p1 # NIL THEN r.p2 := r.p2.p1 END
@@ -121,7 +115,7 @@ BEGIN
     ELSE
     END
   END
-END Advance;
+END END Advance;
 
 PROCEDURE DoOver(VAR r: Ref): Int;
 (* TODO DoOver needs to support applying any dyadic fn, including user defined. *)
@@ -192,6 +186,39 @@ VAR i: Int;
     END;
   RETURN result END ParseIntegers;
 
+  PROCEDURE ParseChar(delim: CHAR): Int;  (* returns 0 at end *)
+  BEGIN
+    IF i >= LEN(s) THEN RETURN 0 END;
+    IF s[i] = delim THEN
+      INC(i);
+      IF (i < LEN(s)) & (s[i] = delim) THEN
+        INC(i);  RETURN ORD(delim)
+      ELSE
+        RETURN 0
+      END
+    ELSE
+      (* TODO Handle UTF-8 here *)
+      INC(i);  RETURN ORD(s[i-1])
+    END
+  END ParseChar;
+
+  PROCEDURE ParseString(): Ref;
+  VAR  result, current: Ref;  delim: CHAR;  c: Int;
+  BEGIN
+    delim := s[i]; INC(i);
+    c := ParseChar(delim);
+    result := NewObj(Integer, NIL, NIL, c);
+    IF c # 0 THEN
+      current := result;  result := NewObj(Stepper, current, current, 0);
+      c := ParseChar(delim);
+      WHILE c # 0 DO
+        current.p1 := NewObj(Integer, NIL, NIL, c);
+        current := current.p1;
+        c := ParseChar(delim);
+      END
+    END;
+  RETURN result END ParseString;
+
   PROCEDURE^ ParseDyadic(priority: Int): Ref;
 
   PROCEDURE ParseOperand(): Ref;
@@ -203,6 +230,7 @@ VAR i: Int;
                w.Assert(op # Nobj, "Expected dyadic operator following '/'.");
                INC(i);  result := NewObj(Over, ParseOperand(), NIL, op)
     |'0'..'9': result := ParseIntegers()
+    |'"',"'":  result := ParseString()
     ELSE       op := Operators[ORD(s[i])].monadic;
                w.Assert(op # Nobj, "Nothing suitable for ParseOperand.");
                INC(i);  result := NewOperator(op, ParseOperand(), NIL)
@@ -325,9 +353,13 @@ BEGIN
   TestPriorityParse("1 2 3 4 r 3");   (* 1 2 3 4 1 2 3 4 1 2 3 4 *)
   TestPriorityParse("1 2 3 4 + 10");  (* 11 12 13 14             *)
   TestPriorityParse("/+ 5 15 27");    (* 47                      *)
+  TestPriorityParse("''");            (* 0                       *)
+  TestPriorityParse("'A'");           (*                         *)
+  TestPriorityParse("'123'");         (* 49 50 51                *)
+  TestPriorityParse('"123"');         (* 49 50 51                *)
+  TestPriorityParse('"!""#"');        (* 33 34 35                *)
+  TestPriorityParse('"¬"');
 END PriorityTest;
-
-
 
 
 (* ------------------------------------------------------------------------ *)
@@ -337,6 +369,7 @@ BEGIN
   RpnTest;
   PriorityTest
 END Test;
+
 
 (* ------------------------------------------------------------------------ *)
 
