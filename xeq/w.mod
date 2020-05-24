@@ -15,7 +15,7 @@ PROCEDURE nb*;                   BEGIN TextWriter.NoBreak              END nb;
 PROCEDURE lc*;                   BEGIN TextWriter.StartLine            END lc;
 PROCEDURE fl*;                   BEGIN TextWriter.Flush                END fl;
 PROCEDURE sl*(c: ARRAY OF CHAR); BEGIN s(c); TextWriter.NewLine        END sl;
-PROCEDURE space(i: LONGINT);     BEGIN WHILE i>0 DO c(' '); DEC(i) END END space;
+PROCEDURE space*(i: LONGINT);    BEGIN WHILE i>0 DO c(' '); DEC(i) END END space;
 PROCEDURE b*(b: BOOLEAN);        BEGIN IF b THEN s("TRUE") ELSE s("FALSE") END END b;
 
 PROCEDURE l*;
