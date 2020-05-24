@@ -214,7 +214,7 @@ VAR i: Int;
   RETURN result END ParseIntegers;
 
   PROCEDURE ParseChar(delim: CHAR): Int;  (* returns 0 at end *)
-  VAR c, n: Int;
+  VAR c, l, n: Int;
   BEGIN
     IF i >= LEN(s) THEN RETURN 0 END;
     IF s[i] = delim THEN
@@ -227,16 +227,22 @@ VAR i: Int;
     ELSE
       c := ORD(s[i]);  INC(i);
       IF (i < LEN(s)) & (c >= 128) THEN (* Multi-byte UTF-8 encoding *)
-        IF    (c DIV 32) =  6 THEN c := c MOD 32;  n := 2
-        ELSIF (c DIV 16) = 14 THEN c := c MOD 16;  n := 3
-        ELSIF (c DIV  8) = 30 THEN c := c MOD  8;  n := 4
-        ELSE  c := 0FFFDH (* Unicode replacement character *)
-        END;
-        IF c < 32 THEN
-          WHILE (i < LEN(s)) & (n > 1) & (ORD(s[i]) >= 128) & (ORD(s[i]) < 192) DO
-            c := c * 64  +  ORD(s[i]) MOD 64;  INC(i);  DEC(n)
+        n := c DIV 16 MOD 4;  (* 0,1: 1 byte follows; 2: 2 bytes; 3 3 bytes. *)
+        IF n < 2 THEN c := c MOD 32; l := i+1 ELSE c := c MOD 16; l := i+n END;
+        (* c is most sig bits, l is limit of following bytes. *)
+        IF l > LEN(s) THEN c := 0FFFDH
+        ELSE
+          WHILE (i < l) & (ORD(s[i]) DIV 64 = 2) DO
+            c := c*64 + ORD(s[i]) MOD 64;  INC(i)
           END;
-          IF n # 1 THEN c := 0FFFDH END
+          IF i # l THEN c := 0FFFDH
+          ELSE
+            CASE n OF
+            |3:  IF (c < 10000H) OR (c > 10FFFFH) THEN c := 0FFFDH END
+            |2:  IF (c < 800H) OR (c >= 0D800H) & (c <= 0DFFFH) THEN c := 0FFFDH END
+            ELSE IF c < 80H THEN c := 0FFFDH END
+            END
+          END
         END
       END
     END;
