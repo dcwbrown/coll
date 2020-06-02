@@ -95,18 +95,19 @@ VAR k, p: Ref;  (* Key and Pattern *)
 BEGIN
   Reset(r.p1);  k := r.p1;
   Reset(r.p2);  p := r.p2;
-  r.i := 0;  (* No match by default *)
-  LOOP
-    WHILE (k.i # p.i) & (p.kind = Stepper) & (p.p2.kind = Integer) & (p.p2.p2 # NIL) DO
-      r.p2 := r.p2.p2
+  IF (p.kind # Stepper) OR (p.p1.kind # Integer) THEN r.i := 0 ELSE
+    LOOP
+      WHILE (k.i # p.i) & (p.p2.p2 # NIL) DO
+        p.p2 := p.p2.p2;  p.i := p.p2.i
+      END;
+      IF More(k) & More(p) & (k.i = p.i) THEN
+        Advance(k); Advance(p)
+      ELSE
+        EXIT
+      END
     END;
-    IF More(k) & More(p) & (k.i = p.i) THEN
-      Advance(k); Advance(p)
-    ELSE
-      EXIT
-    END
-  END;
-  r.i := BoolVal((k.i = p.i) & ~More(k))  (* Success iff whole key matched. *)
+    r.i := BoolVal((k.i = p.i) & ~More(k))  (* Success iff whole key matched. *)
+  END
 END DoMatch;
 
 PROCEDURE Evaluate(r: Ref);
@@ -213,8 +214,33 @@ VAR i: Int;
     END;
   RETURN result END ParseIntegers;
 
-  PROCEDURE ParseChar(delim: CHAR): Int;  (* returns 0 at end *)
+  PROCEDURE ParseUTF8(): Int;
   VAR c, l, n: Int;
+  BEGIN
+    c := ORD(s[i]);  INC(i);
+    IF (i < LEN(s)) & (c >= 128) THEN (* Multi-byte UTF-8 encoding *)
+      n := c DIV 16 MOD 4;  (* 0,1: 1 byte follows; 2: 2 bytes; 3 3 bytes. *)
+      IF n < 2 THEN c := c MOD 32; l := i+1 ELSE c := c MOD 16; l := i+n END;
+      (* c is most sig bits, l is limit of following bytes. *)
+      IF l > LEN(s) THEN c := 0FFFDH; i := LEN(s)
+      ELSE
+        WHILE (i < l) & (ORD(s[i]) DIV 64 = 2) DO
+          c := c*64 + ORD(s[i]) MOD 64;  INC(i)
+        END;
+        IF i # l THEN c := 0FFFDH
+        ELSE
+          CASE n OF
+          |3:  IF (c < 10000H) OR (c > 10FFFFH) THEN c := 0FFFDH END
+          |2:  IF (c < 800H) OR (c >= 0D800H) & (c <= 0DFFFH) THEN c := 0FFFDH END
+          ELSE IF c < 80H THEN c := 0FFFDH END
+          END
+        END
+      END
+    END;
+  RETURN c END ParseUTF8;
+
+  PROCEDURE ParseChar(delim: CHAR): Int;  (* returns 0 at end *)
+  VAR c: Int;
   BEGIN
     IF i >= LEN(s) THEN RETURN 0 END;
     IF s[i] = delim THEN
@@ -225,26 +251,7 @@ VAR i: Int;
         c := 0
       END
     ELSE
-      c := ORD(s[i]);  INC(i);
-      IF (i < LEN(s)) & (c >= 128) THEN (* Multi-byte UTF-8 encoding *)
-        n := c DIV 16 MOD 4;  (* 0,1: 1 byte follows; 2: 2 bytes; 3 3 bytes. *)
-        IF n < 2 THEN c := c MOD 32; l := i+1 ELSE c := c MOD 16; l := i+n END;
-        (* c is most sig bits, l is limit of following bytes. *)
-        IF l > LEN(s) THEN c := 0FFFDH
-        ELSE
-          WHILE (i < l) & (ORD(s[i]) DIV 64 = 2) DO
-            c := c*64 + ORD(s[i]) MOD 64;  INC(i)
-          END;
-          IF i # l THEN c := 0FFFDH
-          ELSE
-            CASE n OF
-            |3:  IF (c < 10000H) OR (c > 10FFFFH) THEN c := 0FFFDH END
-            |2:  IF (c < 800H) OR (c >= 0D800H) & (c <= 0DFFFH) THEN c := 0FFFDH END
-            ELSE IF c < 80H THEN c := 0FFFDH END
-            END
-          END
-        END
-      END
+      c := ParseUTF8()
     END;
   RETURN c END ParseChar;
 
@@ -356,6 +363,9 @@ BEGIN
   TestPriorityParse(18, "'abcde' = 'axcxe'"); (* 1 0 1 0 1               *)
   TestPriorityParse(18, "1 2 3 ? 1 2 3");     (* 1                       *)
   TestPriorityParse(18, "1 2 3 4 ? 1 9 9 4"); (* 0                       *)
+  TestPriorityParse(18, "i4 ? 0 1 2 3");      (* 1                       *)
+  TestPriorityParse(18, "0 1 2 3 ? i4");      (* 0                       *)
+
   w.l;
   TestPriorityParse(50, "/&( 1                 = 1 )");
   TestPriorityParse(50, "/&( 1+2-(5-1)         = -1 )");
@@ -387,6 +397,8 @@ BEGIN
   TestPriorityParse(50, "/&( 'abcde' = 'axcxe' = 1 0 1 0 1 )");
   TestPriorityParse(50, "/&( 1 2 3 ? 1 2 3     = 1 )");
   TestPriorityParse(50, "/&( 1 2 3 4 ? 1 9 9 4 = 0 )");
+  TestPriorityParse(50, "/&( i4 ? 0 1 2 3      = 1 )");
+  TestPriorityParse(50, "/&( 0 1 2 3 ? i4      = 0 )");
 
 END Test;
 
