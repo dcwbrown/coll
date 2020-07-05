@@ -56,12 +56,12 @@ CONST
 
 
   (*  ============ object ============      =========== stepper ============
-      Kind       p1      p2      i          p1          p2         i
+      Kind       p       q       i          p           q          i
       --------   -----   -----   -----      ---------   --------   ---------
-      Integer    next    alt     value      first       curr int   curr val
-      Execute    next    ref     val        first       curr ref   curr val
-      Iota       parm    /       max        Iota        /          curr val
-      Repeat     parm1   parm2   iterno     Repeat      /          curr val
+      Integer    /       alt     value      first       curr int   curr val
+      Execute    /       ref     val        first       curr ref   curr val
+      Iota       parm    /       max        Iota        Iota       curr val
+      Repeat     parm1   parm2   iterno     Repeat      Repeat     curr val
       Negate     parm    /       val
       Not        parm    /       val
       Square     parm    /       val
@@ -75,13 +75,13 @@ CONST
 
   (*  Reset   - reloads p.i with first value
       More    - returns whether there are more values available
-      Advance - steps p.i to the next value
+      Advance - steps p.i to the next  value
   *)
 
 TYPE
   Int   = SYSTEM.INT64;
   Ptr   = POINTER TO Obj;
-  Obj   = RECORD  kind, i: Int;  p1, p2, next, alt: Ptr  END;
+  Obj   = RECORD  kind, i: Int;  n, p, q: Ptr  END;
   OpDef = RECORD  prefix, dyadic, priority: Int  END;
 
 VAR
@@ -99,7 +99,7 @@ PROCEDURE NewObj(kind: Int;  p: Ptr;  i: Int): Ptr;
 VAR obj: Ptr;
 BEGIN Assert(kind # Nobj, "NewObj passed object kind Nobj.");
   NEW(obj);
-  obj.kind := kind;  obj.p1 := p;  obj.i  := i;
+  obj.kind := kind;  obj.p := p;  obj.i  := i;
 RETURN obj END NewObj;
 
 PROCEDURE BoolVal(b: BOOLEAN): Int;
@@ -110,21 +110,21 @@ PROCEDURE^ Advance(p: Ptr);
 PROCEDURE^ More(p: Ptr): BOOLEAN;
 
 PROCEDURE ResetOver(VAR p: Ptr);
-BEGIN Reset(p.p1);
-  CASE p.p2.kind OF
-  |Add:      p.i := p.p1.i; WHILE More(p.p1) DO Advance(p.p1); p.i := p.i  +  p.p1.i END
-  |Subtract: p.i := p.p1.i; WHILE More(p.p1) DO Advance(p.p1); p.i := p.i  -  p.p1.i END
-  |Multiply: p.i := p.p1.i; WHILE More(p.p1) DO Advance(p.p1); p.i := p.i  *  p.p1.i END
-  |Divide:   p.i := p.p1.i; WHILE More(p.p1) DO Advance(p.p1); p.i := p.i DIV p.p1.i END
-  |And:      WHILE (p.p1.i # 0) & More(p.p1) DO Advance(p.p1) END; p.i := BoolVal(p.p1.i # 0)
-  |Or:       WHILE (p.p1.i = 0) & More(p.p1) DO Advance(p.p1) END; p.i := BoolVal(p.p1.i # 0)
+BEGIN Reset(p.p);
+  CASE p.q.kind OF
+  |Add:      p.i := p.p.i; WHILE More(p.p) DO Advance(p.p); p.i := p.i  +  p.p.i END
+  |Subtract: p.i := p.p.i; WHILE More(p.p) DO Advance(p.p); p.i := p.i  -  p.p.i END
+  |Multiply: p.i := p.p.i; WHILE More(p.p) DO Advance(p.p); p.i := p.i  *  p.p.i END
+  |Divide:   p.i := p.p.i; WHILE More(p.p) DO Advance(p.p); p.i := p.i DIV p.p.i END
+  |And:      WHILE (p.p.i # 0) & More(p.p) DO Advance(p.p) END; p.i := BoolVal(p.p.i # 0)
+  |Or:       WHILE (p.p.i = 0) & More(p.p) DO Advance(p.p) END; p.i := BoolVal(p.p.i # 0)
   ELSE       w.Fail("Unsupported over operator.")
   END
 END ResetOver;
 
 PROCEDURE PrepareToStep(VAR p: Ptr);
 BEGIN
-  IF (p.kind <= Repeat) OR (p.next # NIL) THEN
+  IF (p.kind <= Repeat) OR (p.n # NIL) THEN
     p := NewObj(Stepper, p, 0); Reset(p)
   END
 END PrepareToStep;
@@ -134,8 +134,8 @@ BEGIN
   Reset(p);  IF p.kind # Stepper THEN PrepareToStep(p) END;
   Reset(k);  IF k.kind # Stepper THEN PrepareToStep(k) END;
   LOOP
-    WHILE (k.i # p.i) & (p.p2.p2 # NIL) DO
-      p.p2 := p.p2.p2;  p.i := p.p2.i
+    WHILE (k.i # p.i) & (p.q.q # NIL) DO
+      p.q := p.q.q;  p.i := p.q.i
     END;
     IF More(k) & More(p) & (k.i = p.i) THEN
       Advance(k); Advance(p)
@@ -147,48 +147,48 @@ END MatchPattern;
 
 PROCEDURE ResetMatch(VAR p: Ptr);
 BEGIN
-  MatchPattern(p.p1, p.p2);  (* p1 is pattern, p2 is key. *)
-  IF (p.p1.i # p.p2.i) OR More(p.p2) THEN
+  MatchPattern(p.p, p.q);  (* p is pattern, q is key. *)
+  IF (p.p.i # p.q.i) OR More(p.q) THEN
     p.i := 0                (* No match *)
-  ELSIF ~More(p.p1) THEN
+  ELSIF ~More(p.p) THEN
     p.i := 1                (* Match but nothing follows *)
   ELSE
-    p := p.p1;  Advance(p)  (* Return remaining pattern *)
+    p := p.p;  Advance(p)  (* Return remaining pattern *)
   END
 END ResetMatch;
 
 PROCEDURE ResetMerge(VAR r: Ptr);
 VAR p, k: Ptr;  (* Pattern and Key *)
 BEGIN
-  MatchPattern(r.p1, r.p2);
-  r.i := BoolVal((r.p1.i = r.p2.i) & ~More(r.p2));  (* Success iff whole key matched. *)
+  MatchPattern(r.p, r.q);
+  r.i := BoolVal((r.p.i = r.q.i) & ~More(r.q));  (* Success iff whole key matched. *)
   IF r.i # 0 THEN r.i := 0 ELSE  (* Fail if already present *)
-    (* Insert current pos in p1 as alternate in current pos of p2 *)
-    p := r.p1;  k := r.p2;
-    w.Assert(p.kind = Stepper,    "Merge expects pattern to be stepper.");
-    w.Assert(p.p2.kind = Integer, "Merge expects pattern to Execute integer.");
-    w.Assert(p.p2.p2 = NIL,       "Merge expects no remaining alternates at mismatch pattern pos.");
-    w.Assert(k.kind = Stepper,    "Merge expects key to be stepper.");
-    w.Assert(k.p2.kind = Integer, "Merge expects key to Execute integer.");
-    p.p2.p2 := k.p2;
+    (* Insert current pos in p as alternate in current pos of q *)
+    p := r.p;  k := r.q;
+    w.Assert(p.kind = Stepper,   "Merge expects pattern to be stepper.");
+    w.Assert(p.q.kind = Integer, "Merge expects pattern to Execute integer.");
+    w.Assert(p.q.q = NIL,        "Merge expects no remaining alternates at mismatch pattern pos.");
+    w.Assert(k.kind = Stepper,   "Merge expects key to be stepper.");
+    w.Assert(k.q.kind = Integer, "Merge expects key to Execute integer.");
+    p.q.q := k.q;
     r.i := 1
   END
 END ResetMerge;
 
 PROCEDURE Evaluate(p: Ptr);
 BEGIN CASE p.kind OF
-|Negate:     p.i := -p.p1.i
-|Not:        p.i := BoolVal(p.p1.i = 0)
-|Square:     p.i := p.p1.i  *  p.p1.i
-|Add:        p.i := p.p1.i  +  p.p2.i
-|Subtract:   p.i := p.p1.i  -  p.p2.i
-|Multiply:   p.i := p.p1.i  *  p.p2.i
-|Divide:     p.i := p.p1.i DIV p.p2.i
-|Modulo:     p.i := p.p1.i MOD p.p2.i
-|And:        p.i := BoolVal((p.p1.i # 0) &  (p.p2.i # 0))
-|Or:         p.i := BoolVal((p.p1.i # 0) OR (p.p2.i # 0))
-|Equal:      p.i := BoolVal(p.p1.i = p.p2.i)
-|Execute:  p.i := p.p1.i
+|Negate:     p.i := -p.p.i
+|Not:        p.i := BoolVal(p.p.i = 0)
+|Square:     p.i := p.p.i  *  p.p.i
+|Add:        p.i := p.p.i  +  p.q.i
+|Subtract:   p.i := p.p.i  -  p.q.i
+|Multiply:   p.i := p.p.i  *  p.q.i
+|Divide:     p.i := p.p.i DIV p.q.i
+|Modulo:     p.i := p.p.i MOD p.q.i
+|And:        p.i := BoolVal((p.p.i # 0) &  (p.q.i # 0))
+|Or:         p.i := BoolVal((p.p.i # 0) OR (p.q.i # 0))
+|Equal:      p.i := BoolVal(p.p.i = p.q.i)
+|Execute:  p.i := p.p.i
 ELSE
 END END Evaluate;
 
@@ -196,54 +196,56 @@ PROCEDURE Reset(VAR p: Ptr);
 BEGIN IF p # NIL THEN CASE p.kind OF
   |Nobj:    Fail("Cannot reset Nobj.")
   |Integer,
-   Execute: IF p.p1 # NIL THEN PrepareToStep(p) END
-  |Iota:    Reset(p.p1); p.i := p.p1.i; PrepareToStep(p)
-  |Repeat:  Reset(p.p2); PrepareToStep(p)
-  |Stepper: CASE p.p1.kind OF
-            |Integer: p.p2 := p.p1;  p.i := p.p1.i
-            |Execute: p.p2 := p.p1;  Reset(p.p2.p2);  p.i := p.p2.p2.i
+   Execute: IF p.n # NIL THEN PrepareToStep(p) END
+  |Iota:    Reset(p.p); p.i := p.p.i; PrepareToStep(p)
+  |Repeat:  Reset(p.q); PrepareToStep(p)
+  |Stepper: p.q := p.p;
+            CASE p.q.kind OF
+            |Integer: p.i := p.q.i
+            |Execute: Reset(p.q.q);  p.i := p.q.q.i
             |Iota:    p.i := 0
-            |Repeat:  Reset(p.p1.p1); p.p1.i := 0; p.i := p.p1.p1.i
+            |Repeat:  Reset(p.q.p); p.q.i := 0; p.i := p.q.p.i
             ELSE      Fail("Stepper references unsteppable in Reset.")
             END
   |Match:   ResetMatch(p)
   |Merge:   ResetMerge(p)
   |Over:    ResetOver(p)
-  ELSE      Reset(p.p1); Reset(p.p2); Evaluate(p)
+  ELSE      Reset(p.p); Reset(p.q); Evaluate(p)
   END
 END END Reset;
 
 PROCEDURE More(p: Ptr): BOOLEAN;
-BEGIN IF p # NIL THEN CASE p.kind OF
+BEGIN
+  IF p = NIL THEN RETURN FALSE END;
+  CASE p.kind OF
   |Integer, Repeat, Iota, Match, Merge, Over:
-            RETURN FALSE
-  |Stepper: (* w.lc; w.s("More on stepper - "); wref(p); w.s(" -> "); wref(p.p1); *)
-            CASE p.p1.kind OF
-            |Integer,
-             Execute: RETURN p.p2.p1 # NIL
-            |Iota:    RETURN p.i < p.p1.i-1
-            |Repeat:  RETURN (p.p1.i < p.p1.p2.i-1) OR More(p.p1.p1)
-            ELSE      Fail("Stepper references unsteppable in More.")
+            RETURN FALSE  (* If there is more then p will be s stepper *)
+  |Stepper: (* w.lc; w.s("More on stepper - "); wref(p); w.s(" -> "); wref(p.p); *)
+            IF p.q.n # NIL THEN RETURN TRUE END;
+            CASE p.q.kind OF
+            |Iota:    RETURN p.i < p.q.i-1
+            |Repeat:  RETURN (p.q.i < p.q.q.i-1) OR More(p.q.p)
+            ELSE      RETURN FALSE
             END
-  ELSE      RETURN More(p.p1) OR More(p.p2)
-  END
-END; RETURN FALSE END More;
+  ELSE      RETURN More(p.p) OR More(p.q)
+  END;
+RETURN FALSE END More;
 
 PROCEDURE Advance(p: Ptr);
 BEGIN IF p # NIL THEN
   CASE p.kind OF
   |Integer, Repeat, Iota, Match, Merge, Over:  (* No action *)
   |Stepper: Assert(More(p), "No more steppable.");
-            CASE p.p1.kind OF
-            |Integer: p.p2 := p.p2.p1;  p.i := p.p2.i
-            |Execute: p.p2 := p.p2.p1;  Reset(p.p2);  p.i := p.p2.i
+            CASE p.q.kind OF
+            |Integer: p.q := p.q.n;  p.i := p.q.i
+            |Execute: p.q := p.q.n;  Reset(p.q);  p.i := p.q.i
             |Iota:    INC(p.i)
-            |Repeat:  IF More(p.p1.p1) THEN Advance(p.p1.p1);
-                      ELSE Reset(p.p1.p1); INC(p.p1.i) END;
-                      p.i := p.p1.p1.i
+            |Repeat:  IF More(p.q.p) THEN Advance(p.q.p);
+                      ELSE Reset(p.q.p); INC(p.q.i) END;
+                      p.i := p.q.p.i
             ELSE      Fail("Stepper references unsteppable in Advance.")
             END
-  ELSE      Advance(p.p1); Advance(p.p2); Evaluate(p)
+  ELSE      Advance(p.p); Advance(p.q); Evaluate(p)
   END
 END END Advance;
 
@@ -314,8 +316,8 @@ BEGIN i := 0;
   first := NewObj(Integer, NIL, ParseUTF8());
   last := first;
   WHILE (i < LEN(s)) & (s[i] # 0X) DO
-    last.p1 := NewObj(Integer, NIL, ParseUTF8());
-    last := last.p1
+    last.n := NewObj(Integer, NIL, ParseUTF8());
+    last := last.n
   END;
 RETURN first END ImportUTF8;
 
@@ -328,28 +330,30 @@ VAR
   PROCEDURE IntegerToken;
   VAR acc: Int;
   BEGIN acc := characters.i - 30H;
-    WHILE (characters.p1 # NIL) & (characters.p1.i >= 30H) & (characters.p1.i <= 39H) DO
-      characters := characters.p1;
+    WHILE (characters.n   #  NIL)
+        & (characters.n.i >= 30H)
+        & (characters.n.i <= 39H) DO
+      characters := characters.n;
       acc := acc*10 + characters.i - 30H
     END;
     tokenFirst := characters;
     tokenLast  := characters;
     tokenFirst.i := acc;
-    characters := characters.p1;
-    tokenFirst.p1 := NIL
+    characters := characters.n;
+    tokenFirst.n := NIL
   END IntegerToken;
 
   PROCEDURE StringToken;
   VAR  delim: Int;  last: Ptr;
   BEGIN
     delim := characters.i;
-    tokenFirst := characters.p1;
+    tokenFirst := characters.n;
     IF tokenFirst = NIL THEN Fail("Malformed string: nothing after leading delimiter.") END;
     last := tokenFirst;
-    WHILE (last.p1 # NIL) & (last.p1.i # delim) DO last := last.p1 END;
-    IF last.p1 = NIL THEN Fail("Malformed string: no trailing delimiter.") END;
-    characters := last.p1.p1;
-    last.p1 := NIL;
+    WHILE (last.n # NIL) & (last.n.i # delim) DO last := last.n END;
+    IF last.n = NIL THEN Fail("Malformed string: no trailing delimiter.") END;
+    characters := last.n.n;
+    last.n := NIL;
     tokenLast := last
   END StringToken;
 
@@ -377,7 +381,7 @@ VAR
     END;
     (* Distinguish prefix/infix minus and plus *)
     IF (op = Add) OR (op = Subtract) OR (op = Divide) THEN
-      IF spaceBefore & (characters.p1 # NIL) & (characters.p1.i > 20H) THEN
+      IF spaceBefore & (characters.n # NIL) & (characters.n.i > 20H) THEN
         tokenPrefix := TRUE;
         CASE op OF
         |Add:      op := Identity
@@ -393,8 +397,8 @@ VAR
     END;
     tokenFirst := characters;
     tokenLast  := characters;
-    characters := characters.p1;
-    tokenFirst.p1 := NIL;
+    characters := characters.n;
+    tokenFirst.n := NIL;
     tokenFirst.kind := op
   END OperatorToken;
 
@@ -404,7 +408,7 @@ VAR
     tokenPrefix := FALSE; tokenSuffix := FALSE;
     WHILE (characters # NIL) & (characters.i <= 20H) DO
       spaceBefore := TRUE;
-      characters := characters.p1
+      characters := characters.n
     END;
     IF characters # NIL THEN
       CASE characters.i OF
@@ -432,7 +436,7 @@ VAR
     first := tokenFirst;  last := tokenLast;
     IF tokenPrefix THEN
       w.sl("      prefix.");
-      ParseToken; ParseScalar(first.p1, dummy);  last := first
+      ParseToken; ParseScalar(first.n, dummy);  last := first
     ELSIF tokenFirst.kind = Integer THEN
       ParseToken
     ELSE
@@ -452,11 +456,12 @@ VAR
         w.sl("    make Execute.");
         NEW(opcopy); opcopy^ := oplast^;
         oplast.kind := Execute;
-        oplast.p1   := NIL;
-        oplast.p2   := opcopy;
+        oplast.p   := NIL;
+        oplast.n := NIL;
+        oplast.q   := opcopy;
         oplast.i    := 0;
       END;
-      ParseScalar(oplast.p1, oplast)
+      ParseScalar(oplast.n, oplast)
     END;
     w.sl("  ParseOperand complete.");
   RETURN opfirst END ParseOperand;
@@ -491,8 +496,9 @@ END Print;
 PROCEDURE PrintTree(p: Ptr; indent: Int);
 BEGIN
   wkind(p.kind); w.s(": "); w.i(p.i); w.l;
-  IF p.p1 # NIL THEN w.space(indent); w.s("p1: "); PrintTree(p.p1, indent+4) END;
-  IF p.p2 # NIL THEN w.space(indent); w.s("p2: "); PrintTree(p.p2, indent+4) END;
+  IF p.p # NIL THEN w.space(indent); w.s("p: "); PrintTree(p.p, indent+4) END;
+  IF p.q # NIL THEN w.space(indent); w.s("q: "); PrintTree(p.q, indent+4) END;
+  IF p.n # NIL THEN w.space(indent); w.s("n: "); PrintTree(p.n, indent+4) END;
 END PrintTree;
 
 PROCEDURE ColCount(s: ARRAY [1] OF CHAR): Int;
@@ -597,8 +603,8 @@ VAR
       current := result;
       c := ParseChar(delim);
       WHILE c # 0 DO
-        current.p1 := NewObj(Integer, NIL, c);
-        current := current.p1;
+        current.n := NewObj(Integer, NIL, c);
+        current := current.n;
         c := ParseChar(delim);
       END
     END;
@@ -630,8 +636,8 @@ VAR
     IF (i < LEN(s)) & (s[i] >= '0') & (s[i] <= '9') THEN
       current := result;
       WHILE (i < LEN(s)) & (s[i] >= '0') & (s[i] <= '9') DO
-        current.p1 := NewObj(Integer, NIL, ParseInt(s, i));
-        current := current.p1;  skipSpace
+        current.n := NewObj(Integer, NIL, ParseInt(s, i));
+        current := current.n;  skipSpace
       END
     END;
   RETURN result END ParseIntegers;
@@ -650,7 +656,7 @@ VAR
                Assert(op.dyadic # Nobj, "Expected dyadic operator following '/'.");
                INC(i);
                result := NewObj(Over, ParseOperand(), 0);
-               result.p2 := NewObj(op.dyadic, NIL, 0)
+               result.q := NewObj(op.dyadic, NIL, 0)
     |'0'..'9': result := ParseIntegers()
     |'"':      INC(i);  result := ParseString(ORD('"'))
     |"'":      INC(i);  result := ParseString(ORD("'"))
@@ -663,16 +669,16 @@ VAR
 
 
   PROCEDURE ParseDyadic(priority: Int): Ptr;
-  VAR  p1: Ptr;  op: OpDef;
-  BEGIN  p1 := ParseOperand();
+  VAR  p: Ptr;  op: OpDef;
+  BEGIN  p := ParseOperand();
     ParseOperation(op);
     WHILE op.priority >= priority DO
       INC(i);
-      p1    := NewObj(op.dyadic, p1, 0);
-      p1.p2 :=  ParseDyadic(op.priority+1);
+      p    := NewObj(op.dyadic, p, 0);
+      p.q :=  ParseDyadic(op.priority+1);
       ParseOperation(op)
     END;
-  RETURN p1 END ParseDyadic;
+  RETURN p END ParseDyadic;
 
 BEGIN i := 0;
   RETURN ParseDyadic(0)
@@ -783,10 +789,10 @@ PROCEDURE wtree(p: Ptr; nest: Int);
 BEGIN
   IF p = NIL THEN w.sl("NIL.") END;
   wkind(p.kind); w.s(" i="); w.nb; w.i(p.i); w.l;
-  IF p.p1 # NIL THEN
-    w.lc; w.space(nest*4); w.s("p1: "); wtree(p.p1, nest+1)
+  IF p.p # NIL THEN
+    w.lc; w.space(nest*4); w.s("p: "); wtree(p.p, nest+1)
   END;
-  IF p.p2 # NIL THEN
-    w.lc; w.space(nest*4); w.s("p2: "); wtree(p.p2, nest+1)
+  IF p.q # NIL THEN
+    w.lc; w.space(nest*4); w.s("q: "); wtree(p.q, nest+1)
   END;
 END wtree;
