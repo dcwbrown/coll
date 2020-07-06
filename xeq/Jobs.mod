@@ -1,7 +1,6 @@
 MODULE Jobs;  IMPORT w, Codespace, Codegen, SYSTEM;
 
 (* Vague todos:
-   o  Allow sequences to contain nested evaluations?
    o  Define prefix, postfix and dyadic functions
    o  Parse from definitions
    o  Allow over (reduce) implementation to use dyadic functions
@@ -19,8 +18,6 @@ CONST
 
   (* Scalar/linked list types *)
   Integer   = 1;    (* a singleton integer value           *)
-
-  Execute   = 7;    (* evaluation within literal vector    *)
 
   (* Other steppables needing a stepper object *)
   Iota      = 8;    (* a vector of 0 up to a limit         *)
@@ -59,7 +56,6 @@ CONST
       Kind       p       q       i          p           q          i
       --------   -----   -----   -----      ---------   --------   ---------
       Integer    /       alt     value      first       curr int   curr val
-      Execute    /       ref     val        first       curr ref   curr val
       Iota       parm    /       max        Iota        Iota       curr val
       Repeat     parm1   parm2   iterno     Repeat      Repeat     curr val
       Negate     parm    /       val
@@ -166,10 +162,10 @@ BEGIN
     (* Insert current pos in p as alternate in current pos of q *)
     p := r.p;  k := r.q;
     w.Assert(p.kind = Stepper,   "Merge expects pattern to be stepper.");
-    w.Assert(p.q.kind = Integer, "Merge expects pattern to Execute integer.");
+    w.Assert(p.q.kind = Integer, "Merge expects pattern to execute integer.");
     w.Assert(p.q.q = NIL,        "Merge expects no remaining alternates at mismatch pattern pos.");
     w.Assert(k.kind = Stepper,   "Merge expects key to be stepper.");
-    w.Assert(k.q.kind = Integer, "Merge expects key to Execute integer.");
+    w.Assert(k.q.kind = Integer, "Merge expects key to execute integer.");
     p.q.q := k.q;
     r.i := 1
   END
@@ -188,21 +184,18 @@ BEGIN CASE p.kind OF
 |And:        p.i := BoolVal((p.p.i # 0) &  (p.q.i # 0))
 |Or:         p.i := BoolVal((p.p.i # 0) OR (p.q.i # 0))
 |Equal:      p.i := BoolVal(p.p.i = p.q.i)
-|Execute:  p.i := p.p.i
 ELSE
 END END Evaluate;
 
 PROCEDURE Reset(VAR p: Ptr);
 BEGIN IF p # NIL THEN CASE p.kind OF
   |Nobj:    Fail("Cannot reset Nobj.")
-  |Integer,
-   Execute: IF p.n # NIL THEN PrepareToStep(p) END
+  |Integer: IF p.n # NIL THEN PrepareToStep(p) END
   |Iota:    Reset(p.p); p.i := p.p.i; PrepareToStep(p)
   |Repeat:  Reset(p.q); PrepareToStep(p)
   |Stepper: p.q := p.p;
             CASE p.q.kind OF
             |Integer: p.i := p.q.i
-            |Execute: Reset(p.q.q);  p.i := p.q.q.i
             |Iota:    p.i := 0
             |Repeat:  Reset(p.q.p); p.q.i := 0; p.i := p.q.p.i
             ELSE      Fail("Stepper references unsteppable in Reset.")
@@ -238,7 +231,6 @@ BEGIN IF p # NIL THEN
   |Stepper: Assert(More(p), "No more steppable.");
             CASE p.q.kind OF
             |Integer: p.q := p.q.n;  p.i := p.q.i
-            |Execute: p.q := p.q.n;  Reset(p.q);  p.i := p.q.i
             |Iota:    INC(p.i)
             |Repeat:  IF More(p.q.p) THEN Advance(p.q.p);
                       ELSE Reset(p.q.p); INC(p.q.i) END;
@@ -255,7 +247,6 @@ PROCEDURE wkind(k: Int);
 BEGIN CASE k OF
 |Nobj:      w.s("Nobj")
 |Integer:   w.s("Integer")
-|Execute:   w.s("Execute")
 |Iota:      w.s("Iota")
 |Repeat:    w.s("Repeat")
 |Negate:    w.s("Negate")
@@ -336,10 +327,10 @@ VAR
       characters := characters.n;
       acc := acc*10 + characters.i - 30H
     END;
-    tokenFirst := characters;
-    tokenLast  := characters;
+    tokenFirst   := characters;
+    tokenLast    := characters;
     tokenFirst.i := acc;
-    characters := characters.n;
+    characters   := characters.n;
     tokenFirst.n := NIL
   END IntegerToken;
 
@@ -436,7 +427,7 @@ VAR
     first := tokenFirst;  last := tokenLast;
     IF tokenPrefix THEN
       w.sl("      prefix.");
-      ParseToken; ParseScalar(first.n, dummy);  last := first
+      ParseToken; ParseScalar(first.p, dummy);  last := first
     ELSIF tokenFirst.kind = Integer THEN
       ParseToken
     ELSE
@@ -452,15 +443,6 @@ VAR
     ParseScalar(opfirst, oplast);
     WHILE (tokenFirst # NIL) & (tokenPrefix OR (tokenFirst.kind = Integer)) DO
       w.s(" additional scalar, adding to oplast kind "); wkind(oplast.kind); w.l;
-      IF oplast.kind # Integer THEN
-        w.sl("    make Execute.");
-        NEW(opcopy); opcopy^ := oplast^;
-        oplast.kind := Execute;
-        oplast.p   := NIL;
-        oplast.n := NIL;
-        oplast.q   := opcopy;
-        oplast.i    := 0;
-      END;
       ParseScalar(oplast.n, oplast)
     END;
     w.sl("  ParseOperand complete.");
@@ -525,7 +507,7 @@ END TestPriorityParse;
 PROCEDURE TestParse(ind: Int; s: ARRAY OF CHAR);
 VAR  i: Int;  p: Ptr;
 BEGIN
-  w.s("Parse "); w.s(s); w.l;
+  w.l; w.s('Parse "'); w.s(s); w.sl('".');
   p := Parse(s);
   PrintTree(p, 0);
   (* w.s(s);  i := ColCount(s);  WHILE i < ind DO w.c(' '); INC(i) END; *)
@@ -740,8 +722,8 @@ END TestParserOne;
 
 PROCEDURE Test*;
 BEGIN
-  TestParserOne
-  (* TestParserTwo *)
+  TestParserOne;
+  TestParserTwo
 END Test;
 
 (* ------------------------------------------------------------------------ *)
