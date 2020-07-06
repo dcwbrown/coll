@@ -118,17 +118,8 @@ BEGIN Reset(p.p);
   END
 END ResetOver;
 
-PROCEDURE PrepareToStep(VAR p: Ptr);
-BEGIN
-  IF (p.kind <= Repeat) OR (p.n # NIL) THEN
-    p := NewObj(Stepper, p, 0); Reset(p)
-  END
-END PrepareToStep;
-
 PROCEDURE MatchPattern(VAR p, k: Ptr);  (* pattern, key *)
-BEGIN
-  Reset(p);  IF p.kind # Stepper THEN PrepareToStep(p) END;
-  Reset(k);  IF k.kind # Stepper THEN PrepareToStep(k) END;
+BEGIN  Reset(p);  Reset(k);
   LOOP
     WHILE (k.i # p.i) & (p.q.q # NIL) DO
       p.q := p.q.q;  p.i := p.q.i
@@ -188,24 +179,30 @@ ELSE
 END END Evaluate;
 
 PROCEDURE Reset(VAR p: Ptr);
-BEGIN IF p # NIL THEN CASE p.kind OF
-  |Nobj:    Fail("Cannot reset Nobj.")
-  |Integer: IF p.n # NIL THEN PrepareToStep(p) END
-  |Iota:    Reset(p.p); p.i := p.p.i; PrepareToStep(p)
-  |Repeat:  Reset(p.q); PrepareToStep(p)
-  |Stepper: p.q := p.p;
-            CASE p.q.kind OF
-            |Integer: p.i := p.q.i
-            |Iota:    p.i := 0
-            |Repeat:  Reset(p.q.p); p.q.i := 0; p.i := p.q.p.i
-            ELSE      Fail("Stepper references unsteppable in Reset.")
-            END
-  |Match:   ResetMatch(p)
-  |Merge:   ResetMerge(p)
-  |Over:    ResetOver(p)
-  ELSE      Reset(p.p); Reset(p.q); Evaluate(p)
+BEGIN
+  IF p # NIL THEN
+    IF (p.n # NIL) OR (p.kind = Iota) OR (p.kind = Repeat) THEN
+      p := NewObj(Stepper, p, 0); Reset(p)
+    END;
+    CASE p.kind OF
+    |Nobj:    Fail("Cannot reset Nobj.")
+    |Integer: ;
+    |Iota:    Fail("Unexpected reset of unstepped Iota.")
+    |Repeat:  Fail("Unexpected reset of unstepped Repeat.")
+    |Stepper: p.q := p.p;
+              CASE p.q.kind OF
+              |Integer: p.i := p.q.i
+              |Iota:    Reset(p.q.p);  p.q.i := p.q.p.i;  p.i := 0
+              |Repeat:  Reset(p.q.p);  Reset(p.q.q);  p.q.i := 0;  p.i := p.q.p.i
+              ELSE      Fail("Stepper references unsteppable in Reset.")
+              END
+    |Match:   ResetMatch(p)
+    |Merge:   ResetMerge(p)
+    |Over:    ResetOver(p)
+    ELSE      Reset(p.p); Reset(p.q); Evaluate(p)
+    END
   END
-END END Reset;
+END Reset;
 
 PROCEDURE More(p: Ptr): BOOLEAN;
 BEGIN
@@ -216,6 +213,7 @@ BEGIN
   |Stepper: (* w.lc; w.s("More on stepper - "); wref(p); w.s(" -> "); wref(p.p); *)
             IF p.q.n # NIL THEN RETURN TRUE END;
             CASE p.q.kind OF
+            |Integer: RETURN FALSE
             |Iota:    RETURN p.i < p.q.i-1
             |Repeat:  RETURN (p.q.i < p.q.q.i-1) OR More(p.q.p)
             ELSE      RETURN FALSE
