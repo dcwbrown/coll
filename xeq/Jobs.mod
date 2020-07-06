@@ -91,6 +91,37 @@ PROCEDURE Assert(t: BOOLEAN; s: ARRAY [1] OF CHAR); BEGIN w.Assert(t, s) END Ass
 
 (* ------------------------------------------------------------------------ *)
 
+PROCEDURE wkind(k: Int);
+BEGIN CASE k OF
+|Nobj:      w.s("Nobj")
+|Integer:   w.s("Integer")
+|Iota:      w.s("Iota")
+|Repeat:    w.s("Repeat")
+|Negate:    w.s("Negate")
+|Not:       w.s("Not")
+|Square:    w.s("Square")
+|Identity:  w.s("Identity")
+|Add:       w.s("Add")
+|Subtract:  w.s("Subtract")
+|Multiply:  w.s("Multiply")
+|Divide:    w.s("Divide")
+|Modulo:    w.s("Modulo")
+|And:       w.s("And")
+|Or:        w.s("Or")
+|Equal:     w.s("Equal")
+|Factorial: w.s("Factorial")
+|Match:     w.s("Match")
+|Merge:     w.s("Merge")
+|Over:      w.s("Over")
+|Stepper:   w.s("Stepper")
+|Open:      w.s("Open")
+|TreeRoot:  w.s("TreeRoot")
+|ObjLimit:  w.s("ObjLimit")
+ELSE       w.s("Unknown-kind")
+END END wkind;
+
+(* ------------------------------------------------------------------------ *)
+
 PROCEDURE NewObj(kind: Int;  p: Ptr;  i: Int): Ptr;
 VAR obj: Ptr;
 BEGIN Assert(kind # Nobj, "NewObj passed object kind Nobj.");
@@ -119,12 +150,14 @@ BEGIN Reset(p.p);
 END ResetOver;
 
 PROCEDURE MatchPattern(VAR p, k: Ptr);  (* pattern, key *)
-BEGIN  Reset(p);  Reset(k);
+BEGIN
+  IF p.kind # Stepper THEN p := NewObj(Stepper, p, 0) END; Reset(p);
+  IF k.kind # Stepper THEN k := NewObj(Stepper, k, 0) END; Reset(k);
   LOOP
-    WHILE (k.i # p.i) & (p.q.q # NIL) DO
-      p.q := p.q.q;  p.i := p.q.i
+    WHILE (p.q.kind = Integer) & (k.i # p.i) & (p.q.q # NIL) DO
+      p.q := p.q.q;  p.i := p.q.i;
     END;
-    IF More(k) & More(p) & (k.i = p.i) THEN
+    IF (k.i = p.i) & More(k) & More(p) THEN
       Advance(k); Advance(p)
     ELSE
       EXIT
@@ -146,19 +179,28 @@ END ResetMatch;
 
 PROCEDURE ResetMerge(VAR r: Ptr);
 VAR p, k: Ptr;  (* Pattern and Key *)
-BEGIN
-  MatchPattern(r.p, r.q);
-  r.i := BoolVal((r.p.i = r.q.i) & ~More(r.q));  (* Success iff whole key matched. *)
-  IF r.i # 0 THEN r.i := 0 ELSE  (* Fail if already present *)
-    (* Insert current pos in p as alternate in current pos of q *)
-    p := r.p;  k := r.q;
-    w.Assert(p.kind = Stepper,   "Merge expects pattern to be stepper.");
-    w.Assert(p.q.kind = Integer, "Merge expects pattern to execute integer.");
-    w.Assert(p.q.q = NIL,        "Merge expects no remaining alternates at mismatch pattern pos.");
-    w.Assert(k.kind = Stepper,   "Merge expects key to be stepper.");
-    w.Assert(k.q.kind = Integer, "Merge expects key to execute integer.");
+BEGIN  p := r.p;  k := r.q;
+  MatchPattern(p, k);
+  Assert(p.kind = Stepper, "Merge expects pattern to be stepper.");
+  Assert(k.kind = Stepper, "Merge expects key to be stepper.");
+  IF p.i = k.i THEN  (* At least partial match *)
+    IF More(k) THEN
+      Assert(p.q.kind = Integer, "Cannot merge key to non-integer.");
+      Assert(k.q.kind = Integer, "Cannot merge key from non-integer.");
+      Assert(~More(p.q),         "Internal failure, attempt to merge to middle of pattern.");
+      p.q.n := k.q.n;
+      r.i   := 1  (* Success *)
+    ELSE
+      Assert(~More(p), "Pattern incomplete at end of key.");
+      r.i := 0  (* No action taken *)
+    END
+  ELSE  (* Found first mismatch *)
+    (* Insert current pos in key as alternate in current pos of pattern *)
+    Assert(p.q.kind = Integer, "Merge expects current pattern to be integer.");
+    Assert(k.q.kind = Integer, "Merge expects current key to be integer.");
+    Assert(p.q.q = NIL, "Internal failure, merge has not reached last existing alternative.");
     p.q.q := k.q;
-    r.i := 1
+    r.i   := 1
   END
 END ResetMerge;
 
@@ -238,37 +280,6 @@ BEGIN IF p # NIL THEN
   ELSE      Advance(p.p); Advance(p.q); Evaluate(p)
   END
 END END Advance;
-
-(* ------------------------------------------------------------------------ *)
-
-PROCEDURE wkind(k: Int);
-BEGIN CASE k OF
-|Nobj:      w.s("Nobj")
-|Integer:   w.s("Integer")
-|Iota:      w.s("Iota")
-|Repeat:    w.s("Repeat")
-|Negate:    w.s("Negate")
-|Not:       w.s("Not")
-|Square:    w.s("Square")
-|Identity:  w.s("Identity")
-|Add:       w.s("Add")
-|Subtract:  w.s("Subtract")
-|Multiply:  w.s("Multiply")
-|Divide:    w.s("Divide")
-|Modulo:    w.s("Modulo")
-|And:       w.s("And")
-|Or:        w.s("Or")
-|Equal:     w.s("Equal")
-|Factorial: w.s("Factorial")
-|Match:     w.s("Match")
-|Merge:     w.s("Merge")
-|Over:      w.s("Over")
-|Stepper:   w.s("Stepper")
-|Open:      w.s("Open")
-|TreeRoot:  w.s("TreeRoot")
-|ObjLimit:  w.s("ObjLimit")
-ELSE       w.s("Unknown-kind")
-END END wkind;
 
 (* ------------------------------------------------------------------------ *)
 
@@ -708,6 +719,16 @@ BEGIN
   TestPriorityParse(50, "/&( 'abc' ! 'beta'    = 1 )");
   TestPriorityParse(50, "/&( 'abc' ! 'abc'     = 0 )");
   TestPriorityParse(50, "/&( t                 = 47 )");
+
+  (*
+  TestPriorityParse(50, "t"       );
+  TestPriorityParse(50, "t! 'a'"  );
+  TestPriorityParse(50, "t! 'ab'" );
+
+  TestPriorityParse(50, "'z' ! 'ab'" );
+  *)
+
+  TestPriorityParse(50, "/&( t ! 'a'           = 1 )");
   TestPriorityParse(50, "/&( t ! 'alpha'       = 1 )");
   TestPriorityParse(50, "/&( t ! 'beta'        = 1 )");
   TestPriorityParse(50, "/&( t ! 'abc'         = 1 )");
