@@ -152,12 +152,6 @@ BEGIN
   END
 END MatchPattern;
 
-PROCEDURE EvaluateMatch(VAR p: Ptr): Int;
-BEGIN
-  MatchPattern(p.p, p.q);  (* p is pattern, q is key. *)
-  RETURN BoolVal((p.p.i = p.q.i) & ~More(p.q))  (* Whether key is entirely matched *)
-END EvaluateMatch;
-
 PROCEDURE EvaluateMerge(VAR r: Ptr): Int;
 VAR p, k: Ptr;  (* Pattern and Key *)
 BEGIN  p := r.p;  k := r.q;
@@ -172,7 +166,7 @@ BEGIN  p := r.p;  k := r.q;
       p.q.n := k.q.n;
       RETURN 1  (* Success *)
     ELSE
-      IF ~More(p) THEN w.sl("EvaluateMerge warning: Pattern incomplete at end of key.") END;
+      (* IF ~More(p) THEN w.sl("EvaluateMerge warning: Pattern incomplete at end of key.") END; *)
       RETURN 0  (* No action taken *)
     END
   ELSE  (* Found first mismatch *)
@@ -216,7 +210,7 @@ BEGIN CASE p.kind OF
 |And:        RETURN BoolVal((p.p.i # 0) &  (p.q.i # 0))
 |Or:         RETURN BoolVal((p.p.i # 0) OR (p.q.i # 0))
 |Equal:      RETURN BoolVal(p.p.i = p.q.i)
-|Match:      RETURN EvaluateMatch(p)
+|Match:      MatchPattern(p.p, p.q); RETURN BoolVal((p.p.i = p.q.i) & ~More(p.q))  (* Whether key is entirely matched *)
 |Merge:      RETURN EvaluateMerge(p)
 |Over:       RETURN EvaluateOver(p)
 ELSE         w.s("Evaluate passed unexpected kind "); wkind(p.kind); Fail(".")
@@ -421,6 +415,7 @@ VAR
       END
     END;
     spaceBefore := FALSE;
+    (*
     IF tokenFirst = NIL THEN
       w.sl("        ParseToken complete, no more tokens.")
     ELSE
@@ -430,49 +425,50 @@ VAR
       w.s(", suffix "); w.b(tokenSuffix);
       w.sl(".")
     END
+    *)
   END ParseToken;
 
   PROCEDURE ParseScalar(VAR first, last: Ptr);
   VAR dummy: Ptr;
   BEGIN
-    w.sl("    ParseScalar.");
+    (* w.sl("    ParseScalar."); *)
     first := tokenFirst;  last := tokenLast;
     IF tokenPrefix THEN
-      w.sl("      prefix.");
+      (* w.sl("      prefix."); *)
       ParseToken; ParseScalar(first.p, dummy);  last := first
     ELSIF tokenFirst.kind = Integer THEN
       ParseToken
     ELSE
       Fail("Expected scalar")
     END;
-    w.sl("    ParseScalar complete.");
+    (* w.sl("    ParseScalar complete."); *)
   END ParseScalar;
 
   PROCEDURE ParseOperand(): Ptr;
   VAR opfirst, oplast, opcopy: Ptr;  prefix: BOOLEAN;
   BEGIN
-    w.sl("  ParseOperand.");
+    (* w.sl("  ParseOperand."); *)
     ParseScalar(opfirst, oplast);
     WHILE (tokenFirst # NIL) & (tokenPrefix OR (tokenFirst.kind = Integer)) DO
-      w.s(" additional scalar, adding to oplast kind "); wkind(oplast.kind); w.l;
+      (* w.s(" additional scalar, adding to oplast kind "); wkind(oplast.kind); w.l; *)
       ParseScalar(oplast.n, oplast)
     END;
-    w.sl("  ParseOperand complete.");
+    (* w.sl("  ParseOperand complete."); *)
   RETURN opfirst END ParseOperand;
 
   PROCEDURE ParseExpression(level, close: Int): Ptr;  (* close - terminating character *)
   VAR operand, expression: Ptr;
   BEGIN expression := NIL;
-    w.sl("ParseExpression.");
+    (* w.sl("ParseExpression."); *)
     operand := ParseOperand();
     expression := operand;
-    w.sl("ParseExpression complete.");
+    (* w.sl("ParseExpression complete."); *)
   RETURN expression END ParseExpression;
 
 BEGIN tree := NIL;  spaceBefore := TRUE;  (* Start of text counts as space for prefix detection *)
-  w.sl("Parse.");
+  (* w.sl("Parse."); *)
   characters := ImportUTF8(s);
-  w.s("Characters imported, first character "); w.i(characters.i); w.sl(".");
+  (* w.s("Characters imported, first character "); w.i(characters.i); w.sl("."); *)
   IF characters # NIL THEN
     ParseToken;
     tree := ParseExpression(0, 0)
@@ -511,7 +507,7 @@ PROCEDURE^ PriorityParse(s: ARRAY OF CHAR): Ptr;
 PROCEDURE TestPriorityParse(ind: Int; s: ARRAY OF CHAR);
 VAR i: Int;
 BEGIN
-  w.s("Pri  "); w.s(s); w.nb; w.s("  ");
+  w.s('  "'); w.s(s); w.s('" ');
   i := ColCount(s);  WHILE i < ind DO w.c(' '); INC(i) END;
   Print(PriorityParse(s)); w.l;
 END TestPriorityParse;
@@ -519,9 +515,11 @@ END TestPriorityParse;
 PROCEDURE TestParse(ind: Int; s: ARRAY OF CHAR);
 VAR  i: Int;  p: Ptr;
 BEGIN
-  w.l; w.s('Parse "'); w.s(s); w.sl('".');
+  (* w.l; w.s('Parse "'); w.s(s); w.sl('".'); *)
+  w.s('  "'); w.s(s); w.s('" ');
+  i := ColCount(s);  WHILE i < ind DO w.c(' '); INC(i) END;
   p := Parse(s);
-  w.s('"'); w.s(s); w.s('" -> ');  Print(p);  w.l;
+  w.s('➜  ');  Print(p);  w.l;
   (*
   w.sl("Before Reset:");  w.s("  ");  PrintTree(p, 2);
   Reset(p);
@@ -543,6 +541,7 @@ END TestParse;
 
 PROCEDURE TestParserTwo;
 BEGIN
+  w.l; w.sl("Parser two:");
   TestParse(20, "1");
   TestParse(20, "11");
   TestParse(20, "1 1");
@@ -702,6 +701,9 @@ PROCEDURE TestParserOne;
 BEGIN
   Tree := NewObj(Integer, NIL, ORD('/'));
 
+  w.sl("Parser one:");
+
+  (*
   TestPriorityParse(50, "1                 ");
   TestPriorityParse(50, "1+2               ");
   TestPriorityParse(50, "1+2+3             ");
@@ -750,8 +752,8 @@ BEGIN
   TestPriorityParse(50, "t ! 'abc'         ");
   TestPriorityParse(50, "t ? 'abc'         ");
   TestPriorityParse(50, "t ! 'a'           ");
-
   Tree := NewObj(Integer, NIL, ORD('/'));
+  *)
 
   TestPriorityParse(50, "/&( 1                 = 1 )");
   TestPriorityParse(50, "/&( 1+2-(5-1)         = -1 )");
