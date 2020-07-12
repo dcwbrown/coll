@@ -286,12 +286,13 @@ VAR i: Int;  first, last: Ptr;
   PROCEDURE ParseUTF8(): Int;
   VAR c, l, n: Int;
   BEGIN
+    Assert(i < LEN(s), "ParseUTF8 expects at least one character remaining in input.");
     c := ORD(s[i]);  INC(i);
-    IF (i < LEN(s)) & (c >= 128) THEN (* Multi-byte UTF-8 encoding *)
+    IF c >= 128 THEN (* Multi-byte UTF-8 encoding *)
       n := c DIV 16 MOD 4;  (* 0,1: 1 byte follows; 2: 2 bytes; 3 3 bytes. *)
       IF n < 2 THEN c := c MOD 32; l := i+1 ELSE c := c MOD 16; l := i+n END;
       (* c is most sig bits, l is limit of following bytes. *)
-      IF l > LEN(s) THEN c := 0FFFDH; i := LEN(s)
+      IF l > LEN(s) THEN c := 0FFFDH; i := LEN(s)  (* Malformed *)
       ELSE
         WHILE (i < l) & (ORD(s[i]) DIV 64 = 2) DO
           c := c*64 + ORD(s[i]) MOD 64;  INC(i)
@@ -429,13 +430,13 @@ VAR
   END ParseToken;
 
   PROCEDURE ParseScalar(VAR first, last: Ptr);
-  VAR dummy: Ptr;
+  VAR ignored: Ptr;
   BEGIN
     (* w.sl("    ParseScalar."); *)
     first := tokenFirst;  last := tokenLast;
     IF tokenPrefix THEN
       (* w.sl("      prefix."); *)
-      ParseToken; ParseScalar(first.p, dummy);  last := first
+      ParseToken; ParseScalar(first.p, ignored);  last := first
     ELSIF tokenFirst.kind = Integer THEN
       ParseToken
     ELSE
