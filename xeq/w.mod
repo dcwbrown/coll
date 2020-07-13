@@ -7,6 +7,12 @@ VAR  LineCount: INTEGER;
 
 PROCEDURE^ Fail*(msg: ARRAY OF CHAR);
 
+PROCEDURE l*;
+BEGIN
+  TextWriter.NewLine;  INC(LineCount);
+  IF LineCount > MaxLines THEN LineCount := 0; Fail("LineCount exceeded.") END
+END l;
+
 PROCEDURE s*(s: ARRAY OF CHAR);  BEGIN TextWriter.String(s)            END s;
 PROCEDURE c*(c: CHAR);           BEGIN TextWriter.Char(c)              END c;
 PROCEDURE i*(i: LONGINT);        BEGIN TextWriter.Integer(i)           END i;
@@ -14,15 +20,9 @@ PROCEDURE x*(i,n: LONGINT);      BEGIN TextWriter.Hex(i,n)             END x;
 PROCEDURE nb*;                   BEGIN TextWriter.NoBreak              END nb;
 PROCEDURE lc*;                   BEGIN TextWriter.StartLine            END lc;
 PROCEDURE fl*;                   BEGIN TextWriter.Flush                END fl;
-PROCEDURE sl*(c: ARRAY OF CHAR); BEGIN s(c); TextWriter.NewLine        END sl;
+PROCEDURE sl*(c: ARRAY OF CHAR); BEGIN s(c); l                         END sl;
 PROCEDURE space*(i: LONGINT);    BEGIN WHILE i>0 DO c(' '); DEC(i) END END space;
 PROCEDURE b*(b: BOOLEAN);        BEGIN IF b THEN s("TRUE") ELSE s("FALSE") END END b;
-
-PROCEDURE l*;
-BEGIN
-  TextWriter.NewLine;  INC(LineCount);
-  IF LineCount > MaxLines THEN LineCount := 0; Fail("LineCount exceeded.") END
-END l;
 
 PROCEDURE wut(u: LONGINT; n: INTEGER);
 BEGIN

@@ -52,7 +52,8 @@ CONST
 
   (* Tokens *)
   Open      = 27;   (* Parse of '(' *)
-  TreeRoot  = 28;   (* Parse of 't' *)
+  Close     = 28;   (* Parse of ')' *)
+  (* TreeRoot  = 28; *)   (* Parse of 't' *)
 
   ObjLimit  = 29;
 
@@ -100,6 +101,9 @@ PROCEDURE wkind(k: Int);
 BEGIN CASE k OF
 |Nobj:      w.s("Nobj")
 |Integer:   w.s("Integer")
+|Prefix:    w.s("Prefix")
+|Infix:     w.s("Infix")
+|Postfix:   w.s("Postfix")
 |Iota:      w.s("Iota")
 |Repeat:    w.s("Repeat")
 |Negate:    w.s("Negate")
@@ -120,10 +124,23 @@ BEGIN CASE k OF
 |Over:      w.s("Over")
 |Stepper:   w.s("Stepper")
 |Open:      w.s("Open")
-|TreeRoot:  w.s("TreeRoot")
+|Close:     w.s("Close")
+(* |TreeRoot:  w.s("TreeRoot") *)
 |ObjLimit:  w.s("ObjLimit")
-ELSE       w.s("Unknown-kind")
+ELSE        w.s("Unknown-kind "); w.i(k)
 END END wkind;
+
+
+(* ------------------------------------------------------------------------ *)
+
+
+PROCEDURE EvaluateFactorial(i: Int): Int;
+VAR result: Int;
+BEGIN
+  Assert(i >= 0, "Factorial not defined for negative integers");
+  result := 1;
+  WHILE i > 1 DO result := result * i;  DEC(i) END;
+RETURN result END EvaluateFactorial;
 
 (* ------------------------------------------------------------------------ *)
 
@@ -206,6 +223,7 @@ BEGIN CASE p.kind OF
 |Stepper:    Fail("Evaluate passed Stepper.");
 |Negate:     RETURN -p.p.i
 |Identity:   RETURN p.p.i
+|Factorial:  RETURN EvaluateFactorial(p.p.i)
 |Not:        RETURN BoolVal(p.p.i = 0)
 |Square:     RETURN p.p.i  *  p.p.i
 |Add:        RETURN p.p.i  +  p.q.i
@@ -328,8 +346,7 @@ RETURN first END ImportUTF8;
 
 PROCEDURE Parse(s: ARRAY [1] OF CHAR): Ptr;
 VAR
-  characters, tokenFirst, tokenLast, tree: Ptr;
-  spaceBefore: BOOLEAN;
+  characters, token, tree: Ptr;
 
   PROCEDURE IntegerToken;
   VAR acc: Int;
@@ -340,33 +357,54 @@ VAR
       characters := characters.n;
       acc := acc*10 + characters.i - 30H
     END;
-    tokenFirst   := characters;
-    tokenLast    := characters;
-    tokenFirst.i := acc;
-    characters   := characters.n;
-    tokenFirst.n := NIL
+    token      := characters;
+    token.i    := acc;
+    characters := characters.n;
+    token.n    := NIL;
   END IntegerToken;
 
-  PROCEDURE StringToken;
-  VAR  delim: Int;  last: Ptr;
+
+  PROCEDURE ClassifyDelim(delim: Int): Int;  (* 0 - not delim, 1 - terminal delim, 2 - double delim *)
   BEGIN
-    delim := characters.i;
-    tokenFirst := characters.n;
-    IF tokenFirst = NIL THEN Fail("Malformed string: nothing after leading delimiter.") END;
-    last := tokenFirst;
-    WHILE (last.n # NIL) & (last.n.i # delim) DO last := last.n END;
-    IF last.n = NIL THEN Fail("Malformed string: no trailing delimiter.") END;
-    characters := last.n.n;
-    last.n := NIL;
-    tokenLast := last
+    IF characters     = NIL   THEN RETURN 1 END;
+    IF characters.i   # delim THEN RETURN 0 END;
+    IF characters.n   = NIL   THEN RETURN 1 END;
+    IF characters.n.i # delim THEN RETURN 1 END;
+    RETURN 2
+  END ClassifyDelim;
+
+  PROCEDURE StringToken;
+  VAR  delim, class: Int;  last: Ptr;
+  BEGIN
+    (* w.lc; w.sl("StringToken."); *)
+    IF (characters.n = NIL) THEN
+      token := characters;  token.i := -1;  characters := NIL
+    ELSE
+      delim := characters.i;  characters := characters.n;
+      token := characters;
+      class := ClassifyDelim(delim);
+      IF class = 1 THEN  (* empty string *)
+        token.i := -1;  characters := characters.n;  token.n := NIL
+      ELSE
+        WHILE class # 1 DO
+          IF class = 2 THEN characters.n := characters.n.n END;
+          last := characters;  characters := characters.n;
+          class := ClassifyDelim(delim);
+        END;
+        characters := characters.n;
+        (* w.sl("Set NIL!"); *)
+        last.n := NIL
+      END
+    END;
+    (* w.sl("StringToken complete."); *)
   END StringToken;
 
-  PROCEDURE OperatorToken;
+  PROCEDURE OperatorToken(leading: BOOLEAN);
   VAR  op: Int;  spaceAfter: BOOLEAN;
   BEGIN
     spaceAfter := (characters.n = NIL) OR (characters.n.i <= 20H);
 
-    IF spaceBefore = spaceAfter THEN  (* Infix *)
+    IF leading = spaceAfter THEN  (* Infix *)
       characters.kind := Infix;
       CASE characters.i OF
       |3DH:  (* = *) characters.i := Equal
@@ -380,9 +418,9 @@ VAR
       |26H:  (* & *) characters.i := And
       |7CH:  (* | *) characters.i := Or
       |72H:  (* r *) characters.i := Repeat
-      ELSE w.s("Unrecognised infix operator '"); w.c(CHR(characters.i)); Fail("'.");
+      ELSE w.s("Unrecognised infix operator '"); w.c(CHR(characters.i)); w.s("'."); Fail("");
       END;
-    ELSIF spaceBefore THEN  (* Prefix *)
+    ELSIF leading THEN  (* Prefix *)
       characters.kind := Prefix;
       CASE characters.i OF
       |28H:  (* ( *) characters.i := Open
@@ -392,83 +430,121 @@ VAR
       |2BH:  (* + *) characters.i := Identity
       |2DH:  (* - *) characters.i := Negate
       |2FH:  (* / *) characters.i := Over
-      ELSE w.s("Unrecognised prefix operator '"); w.c(CHR(characters.i)); Fail("'.");
+      ELSE w.s("Unrecognised prefix operator '"); w.c(CHR(characters.i)); w.s("'."); Fail("");
       END;
     ELSE  (* Postfix *)
       characters.kind := Postfix;
       CASE characters.i OF
       |21H:  (* ! *) characters.i := Factorial
-      ELSE w.s("Unrecognised postfix operator '"); w.c(CHR(characters.i)); Fail("'.");
+      |29H:  (* ) *) characters.i := Close
+      ELSE w.s("Unrecognised postfix operator '"); w.c(CHR(characters.i)); w.s("'."); Fail("");
       END;
     END;
-    tokenFirst := characters;
-    tokenLast  := characters;
+    token      := characters;
     characters := characters.n;
-    tokenFirst.n := NIL;
+    token.n    := NIL
   END OperatorToken;
 
-  PROCEDURE ParseToken;
+  PROCEDURE ParseToken(leading: BOOLEAN);
   BEGIN
-    tokenFirst  := NIL;   tokenLast   := NIL;
+    token := NIL;
     WHILE (characters # NIL) & (characters.i <= 20H) DO
-      spaceBefore := TRUE;
+      leading := TRUE;
       characters := characters.n
     END;
     IF characters # NIL THEN
       CASE characters.i OF
       |30H..39H:  IntegerToken   (* 0..9 *)
       |22H,27H:   StringToken    (* ' " *)
-      ELSE        OperatorToken
+      ELSE        OperatorToken(leading)
       END
     END;
-    spaceBefore := FALSE;
+    leading := FALSE;
   END ParseToken;
 
-  PROCEDURE ParseScalar(VAR first, last: Ptr);
-  VAR ignored: Ptr;
+  PROCEDURE^ ParseExpression(priority: Int): Ptr;  (* close - terminating character *)
+
+  PROCEDURE ParseScalar(): Ptr;
+  VAR scalar, postfix: Ptr;
   BEGIN
-    (* w.sl("    ParseScalar."); *)
-    first := tokenFirst;  last := tokenLast;
-    IF first.kind = Prefix THEN
-      first.kind := first.i;  first.i := 0;
-      ParseToken; ParseScalar(first.p, ignored);  last := first
-    ELSIF tokenFirst.kind = Integer THEN
-      ParseToken
+    Assert(token # NIL, "Expected token.");
+    Assert((token.kind = Prefix) OR (token.kind = Integer), "Expected scalar");
+    scalar := token;
+    IF scalar.kind = Prefix THEN
+      IF scalar.i = Open THEN
+        ParseToken(TRUE);  scalar := ParseExpression(0)
+      ELSE
+        scalar.kind := scalar.i;  scalar.i := 0;  scalar.n := NIL;
+        ParseToken(TRUE);  (* Parse in continuing prefix context *)
+        scalar.p := ParseScalar()
+      END
     ELSE
-      Fail("Expected scalar")
+      ParseToken(FALSE)
     END;
-    (* w.sl("    ParseScalar complete."); *)
-  END ParseScalar;
+    WHILE (token # NIL) & (token.kind = Postfix) & (token.i # Close) DO
+      token.kind := token.i;  token.i := 0;
+      token.p := scalar;  scalar := token;
+      token := token.n;  scalar.n := NIL;
+    END;
+  RETURN scalar END ParseScalar;
+
+  PROCEDURE Last(p: Ptr): Ptr;
+  VAR last: Ptr;
+  BEGIN last := p;
+    WHILE last.n # NIL DO last := last.n END;
+  RETURN last END Last;
 
   PROCEDURE ParseOperand(): Ptr;
-  VAR opfirst, oplast, opcopy: Ptr;  prefix: BOOLEAN;
+  VAR operand, last: Ptr;
   BEGIN
-    (* w.sl("  ParseOperand."); *)
-    ParseScalar(opfirst, oplast);
-    WHILE (tokenFirst # NIL)
-      &   ((tokenFirst.kind = Prefix) OR (tokenFirst.kind = Integer)) DO
-      (* w.s(" additional scalar, adding to oplast kind "); wkind(oplast.kind); w.l; *)
-      ParseScalar(oplast.n, oplast)
+    operand := ParseScalar();
+    last := Last(operand);
+    WHILE (token # NIL) & ((token.kind = Prefix) OR (token.kind = Integer)) DO
+      last.n := ParseScalar();  last := Last(last.n)
     END;
-    (* w.sl("  ParseOperand complete."); *)
-  RETURN opfirst END ParseOperand;
+  RETURN operand END ParseOperand;
 
-  PROCEDURE ParseExpression(level, close: Int): Ptr;  (* close - terminating character *)
-  VAR operand, expression: Ptr;
-  BEGIN expression := NIL;
-    (* w.sl("ParseExpression."); *)
-    operand := ParseOperand();
-    expression := operand;
-    (* w.sl("ParseExpression complete."); *)
-  RETURN expression END ParseExpression;
+  PROCEDURE Pri(kind: Int): Int;  (* Infix operator priority *)
+  BEGIN
+    CASE kind OF
+    |Nobj:      RETURN 0
+    |Equal:     RETURN 1
+    |Match:     RETURN 1
+    |Add:       RETURN 2
+    |Subtract:  RETURN 2
+    |Merge:     RETURN 2
+    |Multiply:  RETURN 3
+    |Divide:    RETURN 3
+    |Modulo:    RETURN 3
+    |And:       RETURN 3
+    |Or:        RETURN 3
+    |Repeat:    RETURN 4
+    ELSE w.s("Priority passed unexpected kind "); wkind(kind); w.s("."); Fail("");
+    END
+  END Pri;
 
-BEGIN tree := NIL;  spaceBefore := TRUE;  (* Start of text counts as space for prefix detection *)
+  PROCEDURE ParseExpression(priority: Int): Ptr;  (* close - terminating character *)
+  VAR left, right, expression: Ptr;
+  BEGIN
+    left := ParseOperand();
+    WHILE (token # NIL) & (token.kind = Infix) & (Pri(token.i) >= priority) DO
+      expression      := token;
+      expression.kind := expression.i;
+      expression.i    := 0;
+      ParseToken(TRUE);
+      expression.p    := left;
+      expression.q    := ParseExpression(Pri(expression.kind)+1);
+      left := expression;
+    END;
+  RETURN left END ParseExpression;
+
+BEGIN tree := NIL;
   (* w.sl("Parse."); *)
   characters := ImportUTF8(s);
   (* w.s("Characters imported, first character "); w.i(characters.i); w.sl("."); *)
   IF characters # NIL THEN
-    ParseToken;
-    tree := ParseExpression(0, 0)
+    ParseToken(TRUE);
+    tree := ParseExpression(0)
   END;
 RETURN tree END Parse;
 
@@ -480,12 +556,22 @@ BEGIN
   Reset(p);  w.i(p.i);  WHILE More(p) DO Advance(p); w.i(p.i) END
 END Print;
 
+PROCEDURE^ PrintTree(p: Ptr; indent: Int);
+PROCEDURE PrintPtr(label: ARRAY [1] OF CHAR; p,q: Ptr; indent: Int);
+BEGIN
+  IF q # NIL THEN
+    w.space(indent); w.s(label);
+    IF q = p THEN w.sl("self.") ELSE PrintTree(q, indent+3) END
+  END
+END PrintPtr;
+
 PROCEDURE PrintTree(p: Ptr; indent: Int);
 BEGIN
+  Assert(indent < 100, "PrintTree expectes indent < 100.");
   wkind(p.kind); w.s(": "); w.i(p.i); w.l;
-  IF p.p # NIL THEN w.space(indent); w.s("p: "); PrintTree(p.p, indent+4) END;
-  IF p.q # NIL THEN w.space(indent); w.s("q: "); PrintTree(p.q, indent+4) END;
-  IF p.n # NIL THEN w.space(indent); w.s("n: "); PrintTree(p.n, indent+4) END;
+  PrintPtr("p: ", p, p.p, indent);
+  PrintPtr("q: ", p, p.q, indent);
+  PrintPtr("n: ", p, p.n, indent);
 END PrintTree;
 
 PROCEDURE ColCount(s: ARRAY [1] OF CHAR): Int;
@@ -512,45 +598,103 @@ END TestPriorityParse;
 PROCEDURE TestParse(ind: Int; s: ARRAY OF CHAR);
 VAR  i: Int;  p: Ptr;
 BEGIN
-  (* w.l; w.s('Parse "'); w.s(s); w.sl('".'); *)
-  w.s('  "'); w.s(s); w.s('" ');
-  i := ColCount(s);  WHILE i < ind DO w.c(' '); INC(i) END;
-  p := Parse(s);
-  w.s('➜  ');  Print(p);  w.l;
-  (*
-  w.sl("Before Reset:");  w.s("  ");  PrintTree(p, 2);
-  Reset(p);
-  w.sl("After Reset:");   w.s("  ");  PrintTree(p, 2);
-  w.s('"'); w.s(s); w.sl('" ->');
-  w.s("[0] "); w.i(p.i); w.l;
-  IF More(p) THEN
-    i := 1;  Advance(p);
-    w.sl("After Advance:");   w.s("  ");  PrintTree(p, 2);
-    w.s("[1] "); w.i(p.i); w.l;
-    WHILE (i < 9) & More(p) DO
-      INC(i);  Advance(p);
-      w.s("["); w.i(i); w.s("] "); w.i(p.i); w.l
-    END;
-    IF i = 9 THEN w.sl(".. Stopped at 9 iterations.") END
+  IF TRUE THEN
+    w.s('  "'); w.s(s); w.s('" ');
+    i := ColCount(s);  WHILE i < ind DO w.c(' '); INC(i) END;
+    p := Parse(s);
+    w.s('➜  ');  Print(p);  w.l;
+  ELSE
+    w.l; w.s('Parse "'); w.s(s); w.sl('".');
+    p := Parse(s);
+    w.sl("Before Reset:");  w.s("  ");  PrintTree(p, 2);
+    Reset(p);
+    w.sl("After Reset:");   w.s("  ");  PrintTree(p, 2);
+    w.s('"'); w.s(s); w.sl('" ->');
+    w.s("[0] "); w.i(p.i); w.l;
+    IF More(p) THEN
+      i := 1;  Advance(p);
+      w.sl("After Advance:");   w.s("  ");  PrintTree(p, 2);
+      w.s("[1] "); w.i(p.i); w.l;
+      WHILE (i < 9) & More(p) DO
+        INC(i);  Advance(p);
+        w.s("["); w.i(i); w.s("] "); w.i(p.i); w.l
+      END;
+      IF i = 9 THEN w.sl(".. Stopped at 9 iterations.") END
+    END
   END
-  *)
 END TestParse;
 
 PROCEDURE TestParserTwo;
 BEGIN
   w.l; w.sl("Parser two:");
-  TestParse(20, "1");
-  TestParse(20, "11");
-  TestParse(20, "1 1");
-  TestParse(20, "-1");
-  TestParse(20, "-1 1");
-  TestParse(20, "1 -1");
-  TestParse(20, "1 -1 1");
-  TestParse(20, "1 2 3 4 5");
-  TestParse(20, "1 -2 3 -4 5");
-  TestParse(20, "+8");
-  TestParse(20, "'AB' 'CD ¬¦é€£'");
-  TestParse(20, "-'AB'");
+  TestParse(20, "1                 ");
+  TestParse(20, "+8                ");
+  TestParse(20, "-1                ");
+  TestParse(20, "--1               ");
+  TestParse(20, "3!                ");
+  TestParse(20, "-3!               ");
+  TestParse(20, "1 +2              ");
+  TestParse(20, "1 + 2             ");
+  TestParse(20, "1+2               ");
+  TestParse(20, "1+2+3             ");
+  TestParse(20, "1 + 2 - (5 - 1)   ");
+  TestParse(20, "1+2-(5-1)         ");
+  TestParse(20, "1-2-3-4           ");
+  TestParse(20, "2*3+1             ");
+  TestParse(20, "1+2*3             ");
+  TestParse(20, "1+2*3+4           ");
+  TestParse(20, "1 1               ");
+  TestParse(20, "-1 1              ");
+  TestParse(20, "1 -1              ");
+  TestParse(20, "1 -1 1            ");
+  TestParse(20, "1 2 3 4           ");
+  TestParse(20, "1 -2 3 -4 5       ");
+  TestParse(20, "1 2 + 3 4         ");
+  TestParse(20, "1 2 3 4 + 10      ");
+  TestParse(20, "(2)               ");
+  TestParse(20, "1 -(2 3)          ");
+  TestParse(20, "'AB' 'CD ¬¦é€£'   ");
+  TestParse(20, "-'AB'             ");
+  TestParse(20, "i4                ");
+  TestParse(20, "i4+1              ");
+  TestParse(20, "1+2*i4            ");
+  TestParse(20, "1+i4*2            ");
+  TestParse(20, "1 2 3 4 r 3       ");
+  TestParse(20, "i4r3              ");
+
+  (* TestParse(20, "/+5               "); *)
+  (* TestParse(20, "/+i5              "); *)
+  (* TestParse(20, "/-i5              "); *)
+  (* TestParse(20, "/*i5              "); *)
+  (* TestParse(20, "/*(i5+1)          "); *)
+  (* TestParse(20, "/+ 5 15 27        "); *)
+  TestParse(20, "''                ");
+  TestParse(20, "'A'               ");
+  TestParse(20, "'123'             ");
+  TestParse(20, '"123"             ');
+  TestParse(20, '"!""#"            ');
+  TestParse(20, '"¬¦é€£"           ');
+  TestParse(20, "1 2 3 4 = 1 3 2 4 ");
+  TestParse(20, "'abcde' = 'axcxe' ");
+  TestParse(20, "1 2 3 ? 1 2 3     ");
+  TestParse(20, "1 2 3 4 ? 1 9 9 4 ");
+  TestParse(20, "1 2 3 4 ? 1 2     ");
+  TestParse(20, "1 2 ? 1 2 3 4     ");
+  TestParse(20, "i4 ? 0 1 2 3      ");
+  TestParse(20, "0 1 2 3 ? i4      ");
+  TestParse(20, "'abc' ! 'alpha'   ");
+  TestParse(20, "'abc' ! 'beta'    ");
+  TestParse(20, "'abc' ! 'abc'     ");
+  TestParse(20, "t                 ");
+  TestParse(20, "t ! 'a'           ");
+  TestParse(20, "t ! 'alpha'       ");
+  TestParse(20, "t ! 'beta'        ");
+  TestParse(20, "t ! 'abc'         ");
+  TestParse(20, "t ! 'abc'         ");
+  TestParse(20, "t ? 'abc'         ");
+  TestParse(20, "t ! 'a'           ");
+
+
 END TestParserTwo;
 
 
@@ -648,6 +792,7 @@ VAR i: Int;
       END
     END;
   RETURN result END ParseIntegers;
+
 
   PROCEDURE^ ParseDyadic(priority: Int): Ptr;
 
