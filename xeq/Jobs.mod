@@ -549,17 +549,16 @@ BEGIN
   TestParse(20, "1 2 3 4 5");
   TestParse(20, "1 -2 3 -4 5");
   TestParse(20, "+8");
+  TestParse(20, "'AB' 'CD ¬¦é€£'");
+  TestParse(20, "-'AB'");
 END TestParserTwo;
+
 
 (* ------------------------------------------------------------------------ *)
 
 PROCEDURE PriorityParse(s: ARRAY OF CHAR): Ptr;
 
-CONST  Prefix = 0;     Infix = 1;       Postfix = 2;
-       LeftAssoc = 0;  RightAssoc = 1;
-VAR
-  i: Int;  spacebefore: BOOLEAN;  Ch, Op, Fix, Assoc, Priority: Int;  P : Ptr;
-
+VAR i: Int;
 
   PROCEDURE ParseUTF8(): Int;
   VAR c, l, n: Int;
@@ -691,6 +690,7 @@ VAR
 BEGIN i := 0;
   RETURN ParseDyadic(0)
 END PriorityParse;
+
 
 
 (*--------------------------------------------------------------------------*)
