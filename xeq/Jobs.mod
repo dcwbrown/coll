@@ -19,6 +19,11 @@ CONST
   (* Scalar/linked list types *)
   Integer   = 1;    (* a singleton integer value           *)
 
+  (* Parse operator types *)
+  Prefix    = 2;
+  Infix     = 3;
+  Postfix   = 4;
+
   (* Other steppables needing a stepper object *)
   Iota      = 5;    (* a vector of 0 up to a limit         *)
   Repeat    = 6;    (* repeats a source multiple times     *)
@@ -200,6 +205,7 @@ PROCEDURE Evaluate(p: Ptr): Int;
 BEGIN CASE p.kind OF
 |Stepper:    Fail("Evaluate passed Stepper.");
 |Negate:     RETURN -p.p.i
+|Identity:   RETURN p.p.i
 |Not:        RETURN BoolVal(p.p.i = 0)
 |Square:     RETURN p.p.i  *  p.p.i
 |Add:        RETURN p.p.i  +  p.q.i
@@ -323,7 +329,7 @@ RETURN first END ImportUTF8;
 PROCEDURE Parse(s: ARRAY [1] OF CHAR): Ptr;
 VAR
   characters, tokenFirst, tokenLast, tree: Ptr;
-  spaceBefore, tokenPrefix, tokenSuffix: BOOLEAN;
+  spaceBefore: BOOLEAN;
 
   PROCEDURE IntegerToken;
   VAR acc: Int;
@@ -356,54 +362,54 @@ VAR
   END StringToken;
 
   PROCEDURE OperatorToken;
-  VAR op: Int;
+  VAR  op: Int;  spaceAfter: BOOLEAN;
   BEGIN
-    CASE characters.i OF
-    |28H:  (* ( *) op := Open
-    |7EH:  (* ~ *) op := Not
-    |0ACH: (* ¬ *) op := Not
-    |69H:  (* i *) op := Iota
-    |3DH:  (* = *) op := Equal
-    |3FH:  (* ? *) op := Match
-    |21H:  (* ! *) op := Merge
-    |2BH:  (* + *) op := Add;
-    |2DH:  (* - *) op := Subtract
-    |2AH:  (* * *) op := Multiply
-    |2FH:  (* / *) op := Divide
-    |25H:  (* % *) op := Modulo
-    |26H:  (* & *) op := And
-    |7CH:  (* | *) op := Or
-    |72H:  (* r *) op := Repeat
-    |74H:  (* t *) op := TreeRoot
-    ELSE Fail("Unexpected character in NextToken.")
-    END;
-    (* Distinguish prefix/infix minus and plus *)
-    IF (op = Add) OR (op = Subtract) OR (op = Divide) THEN
-      IF spaceBefore & (characters.n # NIL) & (characters.n.i > 20H) THEN
-        tokenPrefix := TRUE;
-        CASE op OF
-        |Add:      op := Identity
-        |Subtract: op := Negate
-        |Divide:   op := Over
-        ELSE
-        END
-      END
-    END;
-    IF (op = Merge) & ~spaceBefore THEN
-      op := Factorial;
-      tokenSuffix := TRUE
+    spaceAfter := (characters.n = NIL) OR (characters.n.i <= 20H);
+
+    IF spaceBefore = spaceAfter THEN  (* Infix *)
+      characters.kind := Infix;
+      CASE characters.i OF
+      |3DH:  (* = *) characters.i := Equal
+      |3FH:  (* ? *) characters.i := Match
+      |21H:  (* ! *) characters.i := Merge
+      |2BH:  (* + *) characters.i := Add
+      |2DH:  (* - *) characters.i := Subtract
+      |2AH:  (* * *) characters.i := Multiply
+      |2FH:  (* / *) characters.i := Divide
+      |25H:  (* % *) characters.i := Modulo
+      |26H:  (* & *) characters.i := And
+      |7CH:  (* | *) characters.i := Or
+      |72H:  (* r *) characters.i := Repeat
+      ELSE w.s("Unrecognised infix operator '"); w.c(CHR(characters.i)); Fail("'.");
+      END;
+    ELSIF spaceBefore THEN  (* Prefix *)
+      characters.kind := Prefix;
+      CASE characters.i OF
+      |28H:  (* ( *) characters.i := Open
+      |7EH:  (* ~ *) characters.i := Not
+      |0ACH: (* ¬ *) characters.i := Not
+      |69H:  (* i *) characters.i := Iota
+      |2BH:  (* + *) characters.i := Identity
+      |2DH:  (* - *) characters.i := Negate
+      |2FH:  (* / *) characters.i := Over
+      ELSE w.s("Unrecognised prefix operator '"); w.c(CHR(characters.i)); Fail("'.");
+      END;
+    ELSE  (* Postfix *)
+      characters.kind := Postfix;
+      CASE characters.i OF
+      |21H:  (* ! *) characters.i := Factorial
+      ELSE w.s("Unrecognised postfix operator '"); w.c(CHR(characters.i)); Fail("'.");
+      END;
     END;
     tokenFirst := characters;
     tokenLast  := characters;
     characters := characters.n;
     tokenFirst.n := NIL;
-    tokenFirst.kind := op
   END OperatorToken;
 
   PROCEDURE ParseToken;
   BEGIN
     tokenFirst  := NIL;   tokenLast   := NIL;
-    tokenPrefix := FALSE; tokenSuffix := FALSE;
     WHILE (characters # NIL) & (characters.i <= 20H) DO
       spaceBefore := TRUE;
       characters := characters.n
@@ -416,17 +422,6 @@ VAR
       END
     END;
     spaceBefore := FALSE;
-    (*
-    IF tokenFirst = NIL THEN
-      w.sl("        ParseToken complete, no more tokens.")
-    ELSE
-      w.s("        ParseToken complete: kind "); wkind(tokenFirst.kind);
-      w.s(", i "); w.i(tokenFirst.i);
-      w.s(", prefix "); w.b(tokenPrefix);
-      w.s(", suffix "); w.b(tokenSuffix);
-      w.sl(".")
-    END
-    *)
   END ParseToken;
 
   PROCEDURE ParseScalar(VAR first, last: Ptr);
@@ -434,8 +429,8 @@ VAR
   BEGIN
     (* w.sl("    ParseScalar."); *)
     first := tokenFirst;  last := tokenLast;
-    IF tokenPrefix THEN
-      (* w.sl("      prefix."); *)
+    IF first.kind = Prefix THEN
+      first.kind := first.i;  first.i := 0;
       ParseToken; ParseScalar(first.p, ignored);  last := first
     ELSIF tokenFirst.kind = Integer THEN
       ParseToken
@@ -450,7 +445,8 @@ VAR
   BEGIN
     (* w.sl("  ParseOperand."); *)
     ParseScalar(opfirst, oplast);
-    WHILE (tokenFirst # NIL) & (tokenPrefix OR (tokenFirst.kind = Integer)) DO
+    WHILE (tokenFirst # NIL)
+      &   ((tokenFirst.kind = Prefix) OR (tokenFirst.kind = Integer)) DO
       (* w.s(" additional scalar, adding to oplast kind "); wkind(oplast.kind); w.l; *)
       ParseScalar(oplast.n, oplast)
     END;
@@ -552,6 +548,7 @@ BEGIN
   TestParse(20, "1 -1 1");
   TestParse(20, "1 2 3 4 5");
   TestParse(20, "1 -2 3 -4 5");
+  TestParse(20, "+8");
 END TestParserTwo;
 
 (* ------------------------------------------------------------------------ *)
