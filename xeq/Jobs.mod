@@ -30,32 +30,34 @@ CONST
 
   Stepper   = 7;    (* Steps through algorithmic sequences *)
 
-  (* Operators not needing a stepper object *)
-  Negate    = 10;   (* monadic operators                   *)
-  Not       = 11;
-  Square    = 12;
-  Identity  = 13;
-  Add       = 14;   (* dyadic operators                    *)
-  Subtract  = 15;
-  Multiply  = 16;
-  Divide    = 17;
-  Modulo    = 18;
-  And       = 19;
-  Or        = 20;
-  Equal     = 21;   (* returns 0s and 1s                   *)
-  Factorial = 22;
+  (* Monadic operators *)
+  Negate    = 8;    (* monadic operators                   *)
+  Not       = 9;
+  Square    = 10;
+  Identity  = 11;
+  Factorial = 12;
+  Sum       = 13;
+  Product   = 14;
+
+  (* Dyadic operators *)
+  Add       = 15;
+  Subtract  = 16;
+  Multiply  = 17;
+  Divide    = 18;
+  Modulo    = 19;
+  And       = 20;
+  Or        = 21;
+  Equal     = 22;   (* returns 0s and 1s                   *)
 
   (* Reduction operators *)
   Match     = 23;   (* walk match tree                     *)
   Merge     = 24;   (* merge into match tree               *)
-  Over      = 25;   (* Applicator                          *)
 
   (* Tokens *)
-  Open      = 27;   (* Parse of '(' *)
-  Close     = 28;   (* Parse of ')' *)
-  (* TreeRoot  = 28; *)   (* Parse of 't' *)
+  Open      = 25;   (* Parse of '(' *)
+  Close     = 26;   (* Parse of ')' *)
 
-  ObjLimit  = 29;
+  ObjLimit  = 27;
 
 
   (*  ============ object ============      =========== stepper ============
@@ -106,10 +108,14 @@ BEGIN CASE k OF
 |Postfix:   w.s("Postfix")
 |Iota:      w.s("Iota")
 |Repeat:    w.s("Repeat")
+|Stepper:   w.s("Stepper")
 |Negate:    w.s("Negate")
 |Not:       w.s("Not")
 |Square:    w.s("Square")
 |Identity:  w.s("Identity")
+|Factorial: w.s("Factorial")
+|Sum:       w.s("Sum")
+|Product:   w.s("Product")
 |Add:       w.s("Add")
 |Subtract:  w.s("Subtract")
 |Multiply:  w.s("Multiply")
@@ -118,14 +124,10 @@ BEGIN CASE k OF
 |And:       w.s("And")
 |Or:        w.s("Or")
 |Equal:     w.s("Equal")
-|Factorial: w.s("Factorial")
 |Match:     w.s("Match")
 |Merge:     w.s("Merge")
-|Over:      w.s("Over")
-|Stepper:   w.s("Stepper")
 |Open:      w.s("Open")
 |Close:     w.s("Close")
-(* |TreeRoot:  w.s("TreeRoot") *)
 |ObjLimit:  w.s("ObjLimit")
 ELSE        w.s("Unknown-kind "); w.i(k)
 END END wkind;
@@ -201,22 +203,6 @@ BEGIN  p := r.p;  k := r.q;
   END
 END EvaluateMerge;
 
-PROCEDURE EvaluateOver(p: Ptr): Int;  (* p -> Over, p.p -> Stepper *)
-VAR i: Int;
-BEGIN
-  Assert(p.kind = Over,      "Expected p -> Over in EvaluateOver.");
-  Assert(p.p.kind = Stepper, "Expected p.p -> Stepper in EvaluateOver.");
-  IF p.p.kind # Stepper THEN w.s("Expected stepper in EvaluateOver, got "); wkind(p.kind); w.sl(".") END;
-  CASE p.q.kind OF
-  |Add:      i := p.p.i;  WHILE More(p.p) DO Advance(p.p);  i := i  +  p.p.i END
-  |Subtract: i := p.p.i;  WHILE More(p.p) DO Advance(p.p);  i := i  -  p.p.i END
-  |Multiply: i := p.p.i;  WHILE More(p.p) DO Advance(p.p);  i := i  *  p.p.i END
-  |Divide:   i := p.p.i;  WHILE More(p.p) DO Advance(p.p);  i := i DIV p.p.i END
-  |And:      WHILE (p.p.i # 0) & More(p.p) DO Advance(p.p) END;  i := BoolVal(p.p.i # 0)
-  |Or:       WHILE (p.p.i = 0) & More(p.p) DO Advance(p.p) END;  i := BoolVal(p.p.i # 0)
-  ELSE       w.Fail("Unsupported over operator.")
-  END;
-RETURN i END EvaluateOver;
 
 PROCEDURE Evaluate(p: Ptr): Int;
 BEGIN CASE p.kind OF
@@ -236,17 +222,18 @@ BEGIN CASE p.kind OF
 |Equal:      RETURN BoolVal(p.p.i = p.q.i)
 |Match:      MatchPattern(p.p, p.q); RETURN BoolVal((p.p.i = p.q.i) & ~More(p.q))  (* Whether key is entirely matched *)
 |Merge:      RETURN EvaluateMerge(p)
-|Over:       RETURN EvaluateOver(p)
 ELSE         w.s("Evaluate passed unexpected kind "); wkind(p.kind); Fail(".")
 END END Evaluate;
 
 PROCEDURE ResetObject(p: Ptr): Int;
+VAR i: Int;
 BEGIN
   CASE p.kind OF
   |Integer: RETURN p.i
   |Iota:    Reset(p.p);  p.i := p.p.i;  RETURN 0
   |Repeat:  Reset(p.p);  Reset(p.q);  p.i := 0;  RETURN p.p.i;
-  |Over:    Reset(p.p);  RETURN EvaluateOver(p);
+  |Product: Reset(p.p);  i := p.p.i;  WHILE (i # 0) & More(p.p) DO Advance(p.p); i := i * p.p.i END; RETURN i
+  |Sum:     Reset(p.p);  i := p.p.i;  WHILE More(p.p) DO Advance(p.p); INC(i, p.p.i) END; RETURN i
   ELSE      Reset(p.p);  Reset(p.q);  RETURN Evaluate(p)
   END
 END ResetObject;
@@ -265,7 +252,7 @@ BEGIN
   IF p.kind # Stepper THEN w.s("Expected stepper in More, got "); wkind(p.kind); w.sl(".") END;
   IF p.q.n # NIL THEN RETURN TRUE END;
   CASE p.q.kind OF
-  |Integer, Match, Merge, Over: RETURN FALSE
+  |Integer, Match, Merge, Product, Sum: RETURN FALSE
   |Iota:    RETURN p.i < p.q.i-1
   |Repeat:  RETURN (p.q.i < p.q.q.i-1) OR More(p.q.p)
   ELSE      RETURN More(p.q.p) OR More(p.q.q)
@@ -345,6 +332,11 @@ RETURN first END ImportUTF8;
 
 
 PROCEDURE Parse(s: ARRAY [1] OF CHAR): Ptr;
+(* TODO
+     Replace priority with known combinations
+     Treat spaces more generally and distinguish
+       1 2+3 4 from 1 2 + 3 4.
+*)
 VAR
   characters, token, tree: Ptr;
 
@@ -405,8 +397,8 @@ VAR
     spaceAfter := (characters.n = NIL) OR (characters.n.i <= 20H);
 
     IF leading = spaceAfter THEN  (* Infix *)
-      characters.kind := Infix;
-      CASE characters.i OF
+     characters.kind := Infix;
+     CASE characters.i OF
       |3DH:  (* = *) characters.i := Equal
       |3FH:  (* ? *) characters.i := Match
       |21H:  (* ! *) characters.i := Merge
@@ -418,31 +410,34 @@ VAR
       |26H:  (* & *) characters.i := And
       |7CH:  (* | *) characters.i := Or
       |72H:  (* r *) characters.i := Repeat
-      ELSE w.s("Unrecognised infix operator '"); w.c(CHR(characters.i)); w.s("'."); Fail("");
+      ELSE w.s("Unrecognised infix operator '"); w.u(characters.i); w.s("'."); Fail("");
       END;
     ELSIF leading THEN  (* Prefix *)
       characters.kind := Prefix;
       CASE characters.i OF
-      |28H:  (* ( *) characters.i := Open
-      |7EH:  (* ~ *) characters.i := Not
-      |0ACH: (* ¬ *) characters.i := Not
-      |69H:  (* i *) characters.i := Iota
-      |2BH:  (* + *) characters.i := Identity
-      |2DH:  (* - *) characters.i := Negate
-      |2FH:  (* / *) characters.i := Over
-      ELSE w.s("Unrecognised prefix operator '"); w.c(CHR(characters.i)); w.s("'."); Fail("");
+      |28H:   (* ( *) characters.i := Open
+      |7EH:   (* ~ *) characters.i := Not
+      |0ACH:  (* ¬ *) characters.i := Not
+      |69H:   (* i *) characters.i := Iota
+      |2BH:   (* + *) characters.i := Identity
+      |2DH:   (* - *) characters.i := Negate
+      ELSE
+        IF    characters.i = 220FH (* ∏ *) THEN characters.i := Product
+        ELSIF characters.i = 2211H (* ∑ *) THEN characters.i := Sum
+        ELSE w.s("Unrecognised prefix operator '"); w.u(characters.i); w.s("'."); Fail("")
+        END
       END;
     ELSE  (* Postfix *)
       characters.kind := Postfix;
       CASE characters.i OF
       |21H:  (* ! *) characters.i := Factorial
       |29H:  (* ) *) characters.i := Close
-      ELSE w.s("Unrecognised postfix operator '"); w.c(CHR(characters.i)); w.s("'."); Fail("");
+      ELSE w.s("Unrecognised postfix operator '"); w.u(characters.i); w.s("'."); Fail("");
       END;
     END;
     token      := characters;
     characters := characters.n;
-    token.n    := NIL
+    token.n    := NIL;
   END OperatorToken;
 
   PROCEDURE ParseToken(leading: BOOLEAN);
@@ -472,7 +467,8 @@ VAR
     scalar := token;
     IF scalar.kind = Prefix THEN
       IF scalar.i = Open THEN
-        ParseToken(TRUE);  scalar := ParseExpression(0)
+        ParseToken(TRUE);  scalar := ParseExpression(0);
+        IF (token # NIL) & (token.i = Close) THEN ParseToken(FALSE) END
       ELSE
         scalar.kind := scalar.i;  scalar.i := 0;  scalar.n := NIL;
         ParseToken(TRUE);  (* Parse in continuing prefix context *)
@@ -507,23 +503,16 @@ VAR
   PROCEDURE Pri(kind: Int): Int;  (* Infix operator priority *)
   BEGIN
     CASE kind OF
-    |Nobj:      RETURN 0
-    |Equal:     RETURN 1
-    |Match:     RETURN 1
-    |Add:       RETURN 2
-    |Subtract:  RETURN 2
-    |Merge:     RETURN 2
-    |Multiply:  RETURN 3
-    |Divide:    RETURN 3
-    |Modulo:    RETURN 3
-    |And:       RETURN 3
-    |Or:        RETURN 3
-    |Repeat:    RETURN 4
+    |Nobj:                           RETURN 0
+    |Equal, Match:                   RETURN 1
+    |Add, Subtract, Or, Merge:       RETURN 2
+    |Multiply, Divide, Modulo, And:  RETURN 3
+    |Repeat:                         RETURN 4
     ELSE w.s("Priority passed unexpected kind "); wkind(kind); w.s("."); Fail("");
     END
   END Pri;
 
-  PROCEDURE ParseExpression(priority: Int): Ptr;  (* close - terminating character *)
+  PROCEDURE ParseExpression(priority: Int): Ptr;
   VAR left, right, expression: Ptr;
   BEGIN
     left := ParseOperand();
@@ -598,11 +587,11 @@ END TestPriorityParse;
 PROCEDURE TestParse(ind: Int; s: ARRAY OF CHAR);
 VAR  i: Int;  p: Ptr;
 BEGIN
-  IF TRUE THEN
+  IF FALSE THEN
     w.s('  "'); w.s(s); w.s('" ');
     i := ColCount(s);  WHILE i < ind DO w.c(' '); INC(i) END;
     p := Parse(s);
-    w.s('➜  ');  Print(p);  w.l;
+    w.s('➜  ');  w.fl;  Print(p);  w.l;
   ELSE
     w.l; w.s('Parse "'); w.s(s); w.sl('".');
     p := Parse(s);
@@ -627,6 +616,7 @@ END TestParse;
 PROCEDURE TestParserTwo;
 BEGIN
   w.l; w.sl("Parser two:");
+  (*
   TestParse(20, "1                 ");
   TestParse(20, "+8                ");
   TestParse(20, "-1                ");
@@ -644,6 +634,7 @@ BEGIN
   TestParse(20, "1+2*3             ");
   TestParse(20, "1+2*3+4           ");
   TestParse(20, "1 1               ");
+  TestParse(20, "(1) (1)           ");
   TestParse(20, "-1 1              ");
   TestParse(20, "1 -1              ");
   TestParse(20, "1 -1 1            ");
@@ -651,6 +642,11 @@ BEGIN
   TestParse(20, "1 -2 3 -4 5       ");
   TestParse(20, "1 2 + 3 4         ");
   TestParse(20, "1 2 3 4 + 10      ");
+
+  TestParse(20, "1 + 2 3 + 4 5 + 6 ");
+  TestParse(20, "1+2 3+4 5+6       ");
+  TestParse(20, "(1+2) (3+4) (5+6) ");
+
   TestParse(20, "(2)               ");
   TestParse(20, "1 -(2 3)          ");
   TestParse(20, "'AB' 'CD ¬¦é€£'   ");
@@ -662,12 +658,14 @@ BEGIN
   TestParse(20, "1 2 3 4 r 3       ");
   TestParse(20, "i4r3              ");
 
-  (* TestParse(20, "/+5               "); *)
-  (* TestParse(20, "/+i5              "); *)
-  (* TestParse(20, "/-i5              "); *)
-  (* TestParse(20, "/*i5              "); *)
-  (* TestParse(20, "/*(i5+1)          "); *)
-  (* TestParse(20, "/+ 5 15 27        "); *)
+  TestParse(20, "∑5                ");
+  TestParse(20, "∑5 1              ");
+  TestParse(20, "∑i5               ");
+  TestParse(20, "∏i5               ");
+  TestParse(20, "∏(i5+1)           ");
+  *)
+  TestParse(20, "∑           ");
+
   TestParse(20, "''                ");
   TestParse(20, "'A'               ");
   TestParse(20, "'123'             ");
@@ -804,11 +802,13 @@ VAR i: Int;
   BEGIN skipSpace;
     CASE s[i] OF
     |'(':      INC(i);  result := ParseDyadic(0);  skipSpace;  expect(')')
+    (*
     |'/':      INC(i);  ParseOperation(op);
                Assert(op.dyadic # Nobj, "Expected dyadic operator following '/'.");
                INC(i);
                result := NewObj(Over, ParseOperand(), 0);
                result.q := NewObj(op.dyadic, NIL, 0)
+    *)
     |'0'..'9': result := ParseIntegers()
     |'"':      INC(i);  result := ParseString(ORD('"'))
     |"'":      INC(i);  result := ParseString(ORD("'"))
@@ -952,7 +952,7 @@ END TestParserOne;
 
 PROCEDURE Test*;
 BEGIN
-  TestParserOne;
+  (* TestParserOne; *)
   TestParserTwo
 END Test;
 
