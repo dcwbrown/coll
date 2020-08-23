@@ -44,20 +44,21 @@ CONST
   Subtract  = 16;
   Multiply  = 17;
   Divide    = 18;
-  Modulo    = 19;
-  And       = 20;
-  Or        = 21;
-  Equal     = 22;   (* returns 0s and 1s                   *)
+  Power     = 19;
+  Modulo    = 20;
+  And       = 21;
+  Or        = 22;
+  Equal     = 23;   (* returns 0s and 1s                   *)
 
   (* Reduction operators *)
-  Match     = 23;   (* walk match tree                     *)
-  Merge     = 24;   (* merge into match tree               *)
+  Match     = 24;   (* walk match tree                     *)
+  Merge     = 25;   (* merge into match tree               *)
 
   (* Tokens *)
-  Open      = 25;   (* Parse of '(' *)
-  Close     = 26;   (* Parse of ')' *)
+  Open      = 26;   (* Parse of '(' *)
+  Close     = 27;   (* Parse of ')' *)
 
-  ObjLimit  = 27;
+  ObjLimit  = 28;
 
 
   (*  ============ object ============      =========== stepper ============
@@ -89,8 +90,9 @@ TYPE
   OpDef = RECORD  prefix, dyadic, priority: Int  END;
 
 VAR
-  Ops:  ARRAY 128 OF OpDef;
-  Tree: Ptr;
+  Ops:      ARRAY 128 OF OpDef;
+  Tree:     Ptr;
+  NilToken: Ptr;
 
 (* ------------------------------------------------------------------------ *)
 
@@ -331,7 +333,7 @@ BEGIN i := 0;
 RETURN first END ImportUTF8;
 
 
-PROCEDURE Parse(s: ARRAY [1] OF CHAR): Ptr;
+PROCEDURE Parse(s: ARRAY [1] OF CHAR; new: BOOLEAN): Ptr;
 (* TODO
      Replace priority with known combinations
      Treat spaces more generally and distinguish
@@ -392,48 +394,44 @@ VAR
   END StringToken;
 
   PROCEDURE OperatorToken(leading: BOOLEAN);
-  VAR  op: Int;  spaceAfter: BOOLEAN;
+  VAR spaceAfter: BOOLEAN;
   BEGIN
     spaceAfter := (characters.n = NIL) OR (characters.n.i <= 20H);
+    CASE characters.i OF
+    |28H:  (* ( *) characters.kind := Open;     characters.i := 0
+    |29H:  (* ) *) characters.kind := Close;    characters.i := 0
 
-    IF leading = spaceAfter THEN  (* Infix *)
-     characters.kind := Infix;
-     CASE characters.i OF
-      |3DH:  (* = *) characters.i := Equal
-      |3FH:  (* ? *) characters.i := Match
-      |21H:  (* ! *) characters.i := Merge
-      |2BH:  (* + *) characters.i := Add
-      |2DH:  (* - *) characters.i := Subtract
-      |2AH:  (* * *) characters.i := Multiply
-      |2FH:  (* / *) characters.i := Divide
-      |25H:  (* % *) characters.i := Modulo
-      |26H:  (* & *) characters.i := And
-      |7CH:  (* | *) characters.i := Or
-      |72H:  (* r *) characters.i := Repeat
-      ELSE w.s("Unrecognised infix operator '"); w.u(characters.i); w.s("'."); Fail("");
-      END;
-    ELSIF leading THEN  (* Prefix *)
-      characters.kind := Prefix;
-      CASE characters.i OF
-      |28H:   (* ( *) characters.i := Open
-      |7EH:   (* ~ *) characters.i := Not
-      |0ACH:  (* ¬ *) characters.i := Not
-      |69H:   (* i *) characters.i := Iota
-      |2BH:   (* + *) characters.i := Identity
-      |2DH:   (* - *) characters.i := Negate
-      ELSE
-        IF    characters.i = 220FH (* ∏ *) THEN characters.i := Product
-        ELSIF characters.i = 2211H (* ∑ *) THEN characters.i := Sum
-        ELSE w.s("Unrecognised prefix operator '"); w.u(characters.i); w.s("'."); Fail("")
-        END
-      END;
-    ELSE  (* Postfix *)
-      characters.kind := Postfix;
-      CASE characters.i OF
-      |21H:  (* ! *) characters.i := Factorial
-      |29H:  (* ) *) characters.i := Close
-      ELSE w.s("Unrecognised postfix operator '"); w.u(characters.i); w.s("'."); Fail("");
-      END;
+    |7EH:  (* ~ *) characters.kind := Prefix;   characters.i := Not
+    |0ACH: (* ¬ *) characters.kind := Prefix;   characters.i := Not
+    |69H:  (* i *) characters.kind := Prefix;   characters.i := Iota
+
+    |2BH:  (* + *) IF leading & ~spaceAfter THEN
+                     characters.kind := Prefix;   characters.i := Identity
+                   ELSE
+                     characters.kind := Infix;    characters.i := Add
+                   END
+    |2DH:  (* - *) IF leading & ~spaceAfter THEN
+                     characters.kind := Prefix;   characters.i := Negate
+                   ELSE
+                     characters.kind := Infix;    characters.i := Subtract
+                   END
+    |3DH:  (* = *) characters.kind := Infix;    characters.i := Equal
+    |3FH:  (* ? *) characters.kind := Infix;    characters.i := Match
+    |2AH:  (* * *) characters.kind := Infix;    characters.i := Multiply
+    |2FH:  (* / *) characters.kind := Infix;    characters.i := Divide
+    |25H:  (* % *) characters.kind := Infix;    characters.i := Modulo
+    |26H:  (* & *) characters.kind := Infix;    characters.i := And
+    |7CH:  (* | *) characters.kind := Infix;    characters.i := Or
+    |72H:  (* r *) characters.kind := Infix;    characters.i := Repeat
+    |5CH:  (* \ *) characters.kind := Infix;    characters.i := Merge
+
+    |21H:  (* ! *) characters.kind := Postfix;  characters.i := Factorial
+
+    ELSE
+      IF    characters.i = 220FH (* ∏ *) THEN characters.kind := Prefix;  characters.i := Product
+      ELSIF characters.i = 2211H (* ∑ *) THEN characters.kind := Prefix;  characters.i := Sum
+      ELSE w.s("Unrecognised operator '"); w.u(characters.i); w.s("'."); Fail("")
+      END
     END;
     token      := characters;
     characters := characters.n;
@@ -447,7 +445,8 @@ VAR
       leading := TRUE;
       characters := characters.n
     END;
-    IF characters # NIL THEN
+    IF characters = NIL THEN token := NilToken
+    ELSE
       CASE characters.i OF
       |30H..39H:  IntegerToken   (* 0..9 *)
       |22H,27H:   StringToken    (* ' " *)
@@ -457,7 +456,87 @@ VAR
     leading := FALSE;
   END ParseToken;
 
+  PROCEDURE Last(p: Ptr): Ptr;
+  VAR last: Ptr;
+  BEGIN last := p;
+    WHILE last.n # NIL DO last := last.n END;
+  RETURN last END Last;
+
   PROCEDURE^ ParseExpression(priority: Int): Ptr;  (* close - terminating character *)
+
+  (* --- *)
+
+  PROCEDURE OperatorPriority(operator: Int): Int;
+  BEGIN
+    CASE operator OF
+    |Power, Square:         RETURN 3;
+    |Multiply, Divide, And: RETURN 2;
+    |Add, Subtract, Or:     RETURN 1;
+    ELSE                    RETURN 0
+    END
+  END OperatorPriority;
+
+  PROCEDURE^ ParseInfixExpression(level: Int): Ptr;
+
+  PROCEDURE ParseOneOperand(): Ptr;  (* Parses right arg of Infix op, or whole expresion *)
+  VAR operand: Ptr;
+  BEGIN
+    IF token.kind = Prefix THEN
+      (* Recursively parse through operand and postfix operations *)
+      operand := token;  ParseToken(TRUE);
+      operand.kind := operand.i;
+      operand.p := ParseOneOperand()
+    ELSE
+      IF token.kind = Open THEN
+        ParseToken(TRUE);
+        operand := ParseInfixExpression(0);
+        Assert((token.kind = Close), "Expected closing parenthesis.");
+        ParseToken(FALSE)
+      ELSE
+        (* Expect literal or named reference *)
+        CASE token.kind OF
+        |Integer: operand := token;  ParseToken(FALSE);
+        ELSE      Fail("Expected operand.")
+        END
+      END;
+
+      (* Apply postfix operations *)
+      WHILE token.kind = Postfix DO
+        token.kind := token.i;  token.i := 0;
+        token.p := operand;
+        operand := token;
+        ParseToken(FALSE)
+      END
+    END;
+    RETURN operand
+  END ParseOneOperand;
+
+  PROCEDURE ParseOperandList(): Ptr;
+  VAR operand, last: Ptr;
+  BEGIN
+    operand := ParseOneOperand();  last := Last(operand);
+    WHILE (token.kind = Prefix)
+    OR    (token.kind = Open)
+    OR    (token.kind = Integer) DO
+      last.n := ParseOneOperand();  last := Last(last.n)
+    END;
+  RETURN operand END ParseOperandList;
+
+  PROCEDURE ParseInfixExpression(level: Int): Ptr;
+  VAR expression, operator: Ptr;
+  BEGIN
+    expression := ParseOperandList();
+    WHILE (token.kind = Infix) & (OperatorPriority(token.i) >= level) DO
+      operator := token;  ParseToken(FALSE);
+      operator.kind := operator.i;  operator.i := 0;
+      operator.p := expression;
+      operator.q := ParseInfixExpression(OperatorPriority(operator.kind)+1);
+      expression := operator
+    END;
+  RETURN expression END ParseInfixExpression;
+
+
+  (* --- *)
 
   PROCEDURE ParseScalar(): Ptr;
   VAR scalar, postfix: Ptr;
@@ -483,12 +562,6 @@ VAR
       token := token.n;  scalar.n := NIL;
     END;
   RETURN scalar END ParseScalar;
-
-  PROCEDURE Last(p: Ptr): Ptr;
-  VAR last: Ptr;
-  BEGIN last := p;
-    WHILE last.n # NIL DO last := last.n END;
-  RETURN last END Last;
 
   PROCEDURE ParseOperand(): Ptr;
   VAR operand, last: Ptr;
@@ -533,7 +606,11 @@ BEGIN tree := NIL;
   (* w.s("Characters imported, first character "); w.i(characters.i); w.sl("."); *)
   IF characters # NIL THEN
     ParseToken(TRUE);
-    tree := ParseExpression(0)
+    IF new THEN
+      tree := ParseInfixExpression(0)
+    ELSE
+      tree := ParseExpression(0)
+    END
   END;
 RETURN tree END Parse;
 
@@ -563,6 +640,36 @@ BEGIN
   PrintPtr("n: ", p, p.n, indent);
 END PrintTree;
 
+PROCEDURE wexpr(e: Ptr);
+VAR vec: BOOLEAN;
+BEGIN vec := e.n # NIL;
+  IF vec THEN w.c("[") END;
+  WHILE e # NIL DO
+    CASE e.kind OF
+    |Integer: w.i(e.i)
+    |Add:        w.c("("); wexpr(e.p); w.c("+"); wexpr(e.q); w.c(")")
+    |Subtract:   w.c("("); wexpr(e.p); w.c("-"); wexpr(e.q); w.c(")")
+    |Multiply:   w.c("("); wexpr(e.p); w.s("×"); wexpr(e.q); w.c(")")
+    |Divide:     w.c("("); wexpr(e.p); w.s("÷"); wexpr(e.q); w.c(")")
+    |Repeat:     w.c("("); wexpr(e.p); w.s("⍴"); wexpr(e.q); w.c(")")
+    |Equal:      w.c("("); wexpr(e.p); w.s("="); wexpr(e.q); w.c(")")
+    |Match:      w.c("("); wexpr(e.p); w.s("?"); wexpr(e.q); w.c(")")
+    |Merge:      w.c("("); wexpr(e.p); w.s("\"); wexpr(e.q); w.c(")")
+    (* Restore sublime text syntax highlighting after backslash hidden quote -> " *)
+    |Iota:       w.s("⍳"); w.c("("); wexpr(e.p); w.c(")")
+    |Sum:        w.s("∑"); w.c("("); wexpr(e.p); w.c(")")
+    |Product:    w.s("∏"); w.c("("); wexpr(e.p); w.c(")")
+    |Negate:     w.c("-"); w.c("("); wexpr(e.p); w.c(")")
+    |Identity:   w.c("+"); w.c("("); wexpr(e.p); w.c(")")
+    |Factorial:  w.c("("); wexpr(e.p); w.c(")"); w.c("!");
+    ELSE         w.c("?")
+    END;
+    e := e.n;
+    IF e # NIL THEN w.c(" ") END
+  END;
+  IF vec THEN w.c("]") END
+END wexpr;
+
 PROCEDURE ColCount(s: ARRAY [1] OF CHAR): Int;
 VAR i, c: Int;
 BEGIN i := 0;  c := 0;
@@ -584,17 +691,19 @@ BEGIN
   Print(PriorityParse(s)); w.l;
 END TestPriorityParse;
 
-PROCEDURE TestParse(ind: Int; s: ARRAY OF CHAR);
+PROCEDURE TestParse(new: BOOLEAN; ind: Int; s: ARRAY OF CHAR);
 VAR  i: Int;  p: Ptr;
 BEGIN
-  IF FALSE THEN
+  IF TRUE THEN
     w.s('  "'); w.s(s); w.s('" ');
     i := ColCount(s);  WHILE i < ind DO w.c(' '); INC(i) END;
-    p := Parse(s);
-    w.s('➜  ');  w.fl;  Print(p);  w.l;
+    w.s('➜  ');  w.fl;
+    p := Parse(s, new);
+    w.s("  "); wexpr(p); w.s("  = ");
+    Print(p);  w.l;
   ELSE
     w.l; w.s('Parse "'); w.s(s); w.sl('".');
-    p := Parse(s);
+    p := Parse(s, new);
     w.sl("Before Reset:");  w.s("  ");  PrintTree(p, 2);
     Reset(p);
     w.sl("After Reset:");   w.s("  ");  PrintTree(p, 2);
@@ -613,87 +722,85 @@ BEGIN
   END
 END TestParse;
 
-PROCEDURE TestParserTwo;
+PROCEDURE TestParserTwo(new: BOOLEAN);
 BEGIN
-  w.l; w.sl("Parser two:");
-  (*
-  TestParse(20, "1                 ");
-  TestParse(20, "+8                ");
-  TestParse(20, "-1                ");
-  TestParse(20, "--1               ");
-  TestParse(20, "3!                ");
-  TestParse(20, "-3!               ");
-  TestParse(20, "1 +2              ");
-  TestParse(20, "1 + 2             ");
-  TestParse(20, "1+2               ");
-  TestParse(20, "1+2+3             ");
-  TestParse(20, "1 + 2 - (5 - 1)   ");
-  TestParse(20, "1+2-(5-1)         ");
-  TestParse(20, "1-2-3-4           ");
-  TestParse(20, "2*3+1             ");
-  TestParse(20, "1+2*3             ");
-  TestParse(20, "1+2*3+4           ");
-  TestParse(20, "1 1               ");
-  TestParse(20, "(1) (1)           ");
-  TestParse(20, "-1 1              ");
-  TestParse(20, "1 -1              ");
-  TestParse(20, "1 -1 1            ");
-  TestParse(20, "1 2 3 4           ");
-  TestParse(20, "1 -2 3 -4 5       ");
-  TestParse(20, "1 2 + 3 4         ");
-  TestParse(20, "1 2 3 4 + 10      ");
+  w.l;
+  IF new THEN w.sl("Parser three:") ELSE w.sl("Parser two:") END;
+  TestParse(new, 20, "1                 ");
+  TestParse(new, 20, "+8                ");
+  TestParse(new, 20, "-1                ");
+  TestParse(new, 20, "--1               ");
+  TestParse(new, 20, "3!                ");
+  TestParse(new, 20, "-3!               ");
+  TestParse(new, 20, "1+2               ");
+  TestParse(new, 20, "1+2+3             ");
+  TestParse(new, 20, "2*3+1             ");
+  TestParse(new, 20, "1+2*3             ");
+  TestParse(new, 20, "1+2*3+4           ");
+  TestParse(new, 20, "0+1-2-3-4         ");
+  TestParse(new, 20, "1-2-3-4           ");
+  TestParse(new, 20, "1+2-(5-1)         ");
+  TestParse(new, 20, "1 1               ");
+  TestParse(new, 20, "(1) (1)           ");
+  TestParse(new, 20, "-1 1              ");
+  TestParse(new, 20, "1 -1              ");
+  TestParse(new, 20, "1 -1 1            ");
+  TestParse(new, 20, "1 2 3 4           ");
+  TestParse(new, 20, "1 -2 3 -4 5       ");
+  TestParse(new, 20, "1 +2              ");
+  TestParse(new, 20, "1 2 + 3 4         ");
+  TestParse(new, 20, "1 2 3 4 + 10      ");
+  TestParse(new, 20, "1 + 2             ");
+  TestParse(new, 20, "1 + 2 - (5 - 1)   ");
 
-  TestParse(20, "1 + 2 3 + 4 5 + 6 ");
-  TestParse(20, "1+2 3+4 5+6       ");
-  TestParse(20, "(1+2) (3+4) (5+6) ");
+  TestParse(new, 20, "1 + 2 3 + 4 5 + 6 ");
+  TestParse(new, 20, "1+2 3+4 5+6       ");
+  TestParse(new, 20, "(1+2) (3+4) (5+6) ");
 
-  TestParse(20, "(2)               ");
-  TestParse(20, "1 -(2 3)          ");
-  TestParse(20, "'AB' 'CD ¬¦é€£'   ");
-  TestParse(20, "-'AB'             ");
-  TestParse(20, "i4                ");
-  TestParse(20, "i4+1              ");
-  TestParse(20, "1+2*i4            ");
-  TestParse(20, "1+i4*2            ");
-  TestParse(20, "1 2 3 4 r 3       ");
-  TestParse(20, "i4r3              ");
+  TestParse(new, 20, "(2)               ");
+  TestParse(new, 20, "1 -(2 3)          ");
+  TestParse(new, 20, "'AB' 'CD ¬¦é€£'   ");
+  TestParse(new, 20, "-'AB'             ");
+  TestParse(new, 20, "i4                ");
+  TestParse(new, 20, "i4+1              ");
+  TestParse(new, 20, "1+2*i4            ");
+  TestParse(new, 20, "1+i4*2            ");
+  TestParse(new, 20, "1 2 3 4 r 3       ");
+  TestParse(new, 20, "i4r3              ");
 
-  TestParse(20, "∑5                ");
-  TestParse(20, "∑5 1              ");
-  TestParse(20, "∑i5               ");
-  TestParse(20, "∏i5               ");
-  TestParse(20, "∏(i5+1)           ");
-  *)
-  TestParse(20, "∑           ");
+  TestParse(new, 20, "∑5                ");
+  TestParse(new, 20, "∑5 1              ");
+  TestParse(new, 20, "∑i5               ");
+  TestParse(new, 20, "∏i5               ");
+  TestParse(new, 20, "∏(i5+1)           ");
 
-  TestParse(20, "''                ");
-  TestParse(20, "'A'               ");
-  TestParse(20, "'123'             ");
-  TestParse(20, '"123"             ');
-  TestParse(20, '"!""#"            ');
-  TestParse(20, '"¬¦é€£"           ');
-  TestParse(20, "1 2 3 4 = 1 3 2 4 ");
-  TestParse(20, "'abcde' = 'axcxe' ");
-  TestParse(20, "1 2 3 ? 1 2 3     ");
-  TestParse(20, "1 2 3 4 ? 1 9 9 4 ");
-  TestParse(20, "1 2 3 4 ? 1 2     ");
-  TestParse(20, "1 2 ? 1 2 3 4     ");
-  TestParse(20, "i4 ? 0 1 2 3      ");
-  TestParse(20, "0 1 2 3 ? i4      ");
-  TestParse(20, "'abc' ! 'alpha'   ");
-  TestParse(20, "'abc' ! 'beta'    ");
-  TestParse(20, "'abc' ! 'abc'     ");
-  TestParse(20, "t                 ");
-  TestParse(20, "t ! 'a'           ");
-  TestParse(20, "t ! 'alpha'       ");
-  TestParse(20, "t ! 'beta'        ");
-  TestParse(20, "t ! 'abc'         ");
-  TestParse(20, "t ! 'abc'         ");
-  TestParse(20, "t ? 'abc'         ");
-  TestParse(20, "t ! 'a'           ");
-
-
-END TestParserTwo;
+  TestParse(new, 20, "''                ");
+  TestParse(new, 20, "'A'               ");
+  TestParse(new, 20, "'123'             ");
+  TestParse(new, 20, '"123"             ');
+  TestParse(new, 20, '"!""#"            ');
+  TestParse(new, 20, '"¬¦é€£"           ');
+  TestParse(new, 20, "1 2 3 4 = 1 3 2 4 ");
+  TestParse(new, 20, "'abcde' = 'axcxe' ");
+  TestParse(new, 20, "1 2 3 ? 1 2 3     ");
+  TestParse(new, 20, "1 2 3 4 ? 1 9 9 4 ");
+  TestParse(new, 20, "1 2 3 4 ? 1 2     ");
+  TestParse(new, 20, "1 2 ? 1 2 3 4     ");
+  TestParse(new, 20, "i4 ? 0 1 2 3      ");
+  TestParse(new, 20, "0 1 2 3 ? i4      ");
+  TestParse(new, 20, "'abc' \ 'alpha'   ");
+  TestParse(new, 20, "'abc' \ 'beta'    ");
+  TestParse(new, 20, "'abc' \ 'abc'     ");
+  (*TestParse(new, 20, "t                 ");
+    TestParse(new, 20, "t \ 'a'           ");
+    TestParse(new, 20, "t \ 'alpha'       ");
+    TestParse(new, 20, "t \ 'beta'        ");
+    TestParse(new, 20, "t \ 'abc'         ");
+    TestParse(new, 20, "t \ 'abc'         ");
+    TestParse(new, 20, "t ? 'abc'         ");
+    TestParse(new, 20, "t \ 'a'           ");
+   *)
+   END TestParserTwo;
 
 
 (* ------------------------------------------------------------------------ *)
@@ -953,7 +1060,9 @@ END TestParserOne;
 PROCEDURE Test*;
 BEGIN
   (* TestParserOne; *)
-  TestParserTwo
+  (* TestParserTwo(FALSE); *)
+  NEW(NilToken);  NilToken.kind := Nobj;  NilToken.i := 0;
+  TestParserTwo(TRUE);
 END Test;
 
 (* ------------------------------------------------------------------------ *)
@@ -990,7 +1099,10 @@ BEGIN
   DefOp('r', Nobj,     Repeat,   3)
 END InitOpLevel;
 
-BEGIN  InitOpLevel;  Tree := NewObj(Integer, NIL, ORD('/'))
+BEGIN
+  InitOpLevel;
+  Tree := NewObj(Integer, NIL, ORD('/'));
+  NilToken := NIL
 END Jobs.
 
 
