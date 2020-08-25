@@ -423,6 +423,8 @@ VAR
     ELSE
       IF    characters.i = 220FH (* ∏ *) THEN characters.kind := Prefix;  characters.i := Product
       ELSIF characters.i = 2211H (* ∑ *) THEN characters.kind := Prefix;  characters.i := Sum
+      ELSIF characters.i = 2373H (* ⍳ *) THEN characters.kind := Prefix;  characters.i := Iota
+      ELSIF characters.i = 2374H (* ⍴ *) THEN characters.kind := Infix;  characters.i := Repeat
       ELSE w.s("Unrecognised operator '"); w.u(characters.i); w.s("'."); Fail("")
       END
     END;
@@ -554,7 +556,7 @@ END PrintPtr;
 
 PROCEDURE PrintTree(p: Ptr; indent: Int);
 BEGIN
-  Assert(indent < 100, "PrintTree expectes indent < 100.");
+  Assert(indent < 100, "PrintTree expects indent < 100.");
   wkind(p.kind); w.s(": "); w.i(p.i); w.l;
   PrintPtr("p: ", p, p.p, indent);
   PrintPtr("q: ", p, p.q, indent);
@@ -563,25 +565,37 @@ END PrintTree;
 
 PROCEDURE wexpr(e: Ptr);
 VAR vec: BOOLEAN;
+
+  PROCEDURE winfix(op: ARRAY OF CHAR);
+  BEGIN w.c("("); wexpr(e.p); w.s(op); wexpr(e.q); w.c(")") END winfix;
+
+  PROCEDURE wprefix(op: ARRAY OF CHAR);
+  BEGIN w.s(op);
+    IF e.p.kind = Integer THEN wexpr(e.p) ELSE w.c("("); wexpr(e.p); w.c(")") END
+  END wprefix;
+
+  PROCEDURE wpostfix(op: ARRAY OF CHAR);
+  BEGIN w.c("("); wexpr(e.p); w.c(")"); w.c("!") END wpostfix;
+
 BEGIN vec := e.n # NIL;
   IF vec THEN w.c("[") END;
   WHILE e # NIL DO
     CASE e.kind OF
-    |Integer: w.i(e.i)
-    |Add:        w.c("("); wexpr(e.p); w.c("+"); wexpr(e.q); w.c(")")
-    |Subtract:   w.c("("); wexpr(e.p); w.c("-"); wexpr(e.q); w.c(")")
-    |Multiply:   w.c("("); wexpr(e.p); w.s("×"); wexpr(e.q); w.c(")")
-    |Divide:     w.c("("); wexpr(e.p); w.s("÷"); wexpr(e.q); w.c(")")
-    |Repeat:     w.c("("); wexpr(e.p); w.s("⍴"); wexpr(e.q); w.c(")")
-    |Equal:      w.c("("); wexpr(e.p); w.s("="); wexpr(e.q); w.c(")")
-    |Match:      w.c("("); wexpr(e.p); w.s("?"); wexpr(e.q); w.c(")")
-    |Merge:      w.c("("); wexpr(e.p); w.s(","); wexpr(e.q); w.c(")")
-    |Iota:       w.s("⍳"); w.c("("); wexpr(e.p); w.c(")")
-    |Sum:        w.s("∑"); w.c("("); wexpr(e.p); w.c(")")
-    |Product:    w.s("∏"); w.c("("); wexpr(e.p); w.c(")")
-    |Negate:     w.c("-"); w.c("("); wexpr(e.p); w.c(")")
-    |Identity:   w.c("+"); w.c("("); wexpr(e.p); w.c(")")
-    |Factorial:  w.c("("); wexpr(e.p); w.c(")"); w.c("!");
+    |Integer:    w.i(e.i)
+    |Add:        winfix("+")
+    |Subtract:   winfix("-")
+    |Multiply:   winfix("×")
+    |Divide:     winfix("÷")
+    |Repeat:     winfix("⍴")
+    |Equal:      winfix("=")
+    |Match:      winfix("?")
+    |Merge:      winfix(",")
+    |Iota:       wprefix("⍳")
+    |Sum:        wprefix("∑")
+    |Product:    wprefix("∏")
+    |Negate:     wprefix("-")
+    |Identity:   wprefix("+")
+    |Factorial:  wpostfix("!")
     ELSE         w.c("?")
     END;
     e := e.n;
