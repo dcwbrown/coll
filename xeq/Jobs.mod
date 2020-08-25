@@ -416,7 +416,7 @@ VAR
     |26H:  (* & *) characters.kind := Infix;    characters.i := And
     |7CH:  (* | *) characters.kind := Infix;    characters.i := Or
     |72H:  (* r *) characters.kind := Infix;    characters.i := Repeat
-    |5CH:  (* \ *) characters.kind := Infix;    characters.i := Merge
+    |2CH:  (* , *) characters.kind := Infix;    characters.i := Merge
 
     |21H:  (* ! *) characters.kind := Postfix;  characters.i := Factorial
 
@@ -575,8 +575,7 @@ BEGIN vec := e.n # NIL;
     |Repeat:     w.c("("); wexpr(e.p); w.s("⍴"); wexpr(e.q); w.c(")")
     |Equal:      w.c("("); wexpr(e.p); w.s("="); wexpr(e.q); w.c(")")
     |Match:      w.c("("); wexpr(e.p); w.s("?"); wexpr(e.q); w.c(")")
-    |Merge:      w.c("("); wexpr(e.p); w.s("\"); wexpr(e.q); w.c(")")
-    (* Restore sublime text syntax highlighting after backslash hidden quote -> " *)
+    |Merge:      w.c("("); wexpr(e.p); w.s(","); wexpr(e.q); w.c(")")
     |Iota:       w.s("⍳"); w.c("("); wexpr(e.p); w.c(")")
     |Sum:        w.s("∑"); w.c("("); wexpr(e.p); w.c(")")
     |Product:    w.s("∏"); w.c("("); wexpr(e.p); w.c(")")
@@ -689,6 +688,7 @@ BEGIN
   TestParse(20, '"123"             ');
   TestParse(20, '"!""#"            ');
   TestParse(20, '"¬¦é€£"           ');
+  TestParse(20, "'a'1'b'           ");
 
   TestParse(20, "1 2 3 4 = 1 3 2 4 ");
   TestParse(20, "'abcde' = 'axcxe' ");
@@ -698,19 +698,19 @@ BEGIN
   TestParse(20, "1 2 ? 1 2 3 4     ");
   TestParse(20, "i4 ? 0 1 2 3      ");
   TestParse(20, "0 1 2 3 ? i4      ");
-  TestParse(20, "'abc' \ 'alpha'   ");
-  TestParse(20, "'abc' \ 'beta'    ");
-  TestParse(20, "'abc' \ 'abc'     ");
+  TestParse(20, "'abc' , 'alpha'   ");
+  TestParse(20, "'abc' , 'beta'    ");
+  TestParse(20, "'abc' , 'abc'     ");
 
   (*
   TestParse(20, "t                 ");
-  TestParse(20, "t \ 'a'           ");
-  TestParse(20, "t \ 'alpha'       ");
-  TestParse(20, "t \ 'beta'        ");
-  TestParse(20, "t \ 'abc'         ");
-  TestParse(20, "t \ 'abc'         ");
+  TestParse(20, "t , 'a'           ");
+  TestParse(20, "t , 'alpha'       ");
+  TestParse(20, "t , 'beta'        ");
+  TestParse(20, "t , 'abc'         ");
+  TestParse(20, "t , 'abc'         ");
   TestParse(20, "t ? 'abc'         ");
-  TestParse(20, "t \ 'a'           ");
+  TestParse(20, "t , 'a'           ");
   TestParse(20, "t ? 'al'");
   TestParse(20, "t ? 'be'");
   *)
