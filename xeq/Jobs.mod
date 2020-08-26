@@ -231,7 +231,7 @@ BEGIN
   CASE p.kind OF
   |Integer: RETURN p.i
   |Iota:    Reset(p.p);  p.i := p.p.i;  RETURN 0
-  |Repeat:  Reset(p.p);  Reset(p.q);  p.i := 0;  RETURN p.p.i;
+  |Repeat:  Reset(p.p);  Reset(p.q);  p.i := 0;  RETURN p.q.i;
   |Product: Reset(p.p);  i := p.p.i;  WHILE (i # 0) & More(p.p) DO Advance(p.p); i := i * p.p.i END; RETURN i
   |Sum:     Reset(p.p);  i := p.p.i;  WHILE More(p.p) DO Advance(p.p); INC(i, p.p.i) END; RETURN i
   ELSE      Reset(p.p);  Reset(p.q);  RETURN Evaluate(p)
@@ -254,7 +254,7 @@ BEGIN
   CASE p.q.kind OF
   |Integer, Match, Merge, Product, Sum: RETURN FALSE
   |Iota:    RETURN p.i < p.q.i-1
-  |Repeat:  RETURN (p.q.i < p.q.q.i-1) OR More(p.q.p)
+  |Repeat:  RETURN (p.q.i < p.q.p.i-1) OR More(p.q.q)
   ELSE      RETURN More(p.q.p) OR More(p.q.q)
   END;
 RETURN FALSE END More;
@@ -274,10 +274,10 @@ BEGIN IF p # NIL THEN
   CASE p.q.kind OF
   |Integer: Next(p)
   |Iota:    IF p.i < p.q.i-1 THEN INC(p.i) ELSE Next(p) END
-  |Repeat:  IF More(p.q.p) THEN
-              Advance(p.q.p); p.i := p.q.p.i
-            ELSIF p.q.i < p.q.q.i-1 THEN
-              Reset(p.q.p); INC(p.q.i); p.i := p.q.p.i
+  |Repeat:  IF More(p.q.q) THEN
+              Advance(p.q.q); p.i := p.q.q.i
+            ELSIF p.q.i < p.q.p.i-1 THEN
+              Reset(p.q.q); INC(p.q.i); p.i := p.q.q.i
             ELSE
               Next(p)
             END;
@@ -686,8 +686,9 @@ BEGIN
   TestParse(20, "i4+1              ");
   TestParse(20, "1+2*i4            ");
   TestParse(20, "1+i4*2            ");
-  TestParse(20, "1 2 3 4 r 3       ");
-  TestParse(20, "i4r3              ");
+
+  TestParse(20, "3 r 1 2 3 4       ");
+  TestParse(20, "3ri4              ");
 
   TestParse(20, "∑5                ");
   TestParse(20, "∑5 1              ");
