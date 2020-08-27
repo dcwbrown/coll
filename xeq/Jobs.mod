@@ -564,44 +564,38 @@ BEGIN
 END PrintTree;
 
 PROCEDURE wexpr(e: Ptr);
-VAR vec: BOOLEAN;
-
-  PROCEDURE winfix(op: ARRAY OF CHAR);
-  BEGIN w.c("("); wexpr(e.p); w.s(op); wexpr(e.q); w.c(")") END winfix;
-
-  PROCEDURE wprefix(op: ARRAY OF CHAR);
-  BEGIN w.s(op);
-    IF e.p.kind = Integer THEN wexpr(e.p) ELSE w.c("("); wexpr(e.p); w.c(")") END
-  END wprefix;
-
-  PROCEDURE wpostfix(op: ARRAY OF CHAR);
-  BEGIN w.c("("); wexpr(e.p); w.c(")"); w.c("!") END wpostfix;
-
-BEGIN vec := e.n # NIL;
-  IF vec THEN w.c("[") END;
-  WHILE e # NIL DO
-    CASE e.kind OF
-    |Integer:    w.i(e.i)
-    |Add:        winfix("+")
-    |Subtract:   winfix("-")
-    |Multiply:   winfix("×")
-    |Divide:     winfix("÷")
-    |Repeat:     winfix("⍴")
-    |Equal:      winfix("=")
-    |Match:      winfix("?")
-    |Merge:      winfix(",")
-    |Iota:       wprefix("⍳")
-    |Sum:        wprefix("∑")
-    |Product:    wprefix("∏")
-    |Negate:     wprefix("-")
-    |Identity:   wprefix("+")
-    |Factorial:  wpostfix("!")
-    ELSE         w.c("?")
+  PROCEDURE winfix  (op: ARRAY OF CHAR); BEGIN wexpr(e.p); w.s(op); wexpr(e.q) END winfix;
+  PROCEDURE wprefix (op: ARRAY OF CHAR); BEGIN w.s(op); wexpr(e.p)             END wprefix;
+  PROCEDURE wpostfix(op: ARRAY OF CHAR); BEGIN wexpr(e.p); w.c("!")            END wpostfix;
+BEGIN
+  IF (e.kind = Integer) & (e.n = NIL) THEN
+    w.i(e.i)
+  ELSE
+    w.c("(");
+    WHILE e # NIL DO
+      CASE e.kind OF
+      |Integer:    w.i(e.i)
+      |Add:        winfix("+")
+      |Subtract:   winfix("-")
+      |Multiply:   winfix("×")
+      |Divide:     winfix("÷")
+      |Repeat:     winfix("⍴")
+      |Equal:      winfix("=")
+      |Match:      winfix("?")
+      |Merge:      winfix(",")
+      |Iota:       wprefix("⍳")
+      |Sum:        wprefix("∑")
+      |Product:    wprefix("∏")
+      |Negate:     wprefix("-")
+      |Identity:   wprefix("+")
+      |Factorial:  wpostfix("!")
+      ELSE         w.c("?")
+      END;
+      e := e.n;
+      IF e # NIL THEN w.c(" ") END
     END;
-    e := e.n;
-    IF e # NIL THEN w.c(" ") END
-  END;
-  IF vec THEN w.c("]") END
+    w.c(")")
+  END
 END wexpr;
 
 PROCEDURE ColCount(s: ARRAY [1] OF CHAR): Int;
