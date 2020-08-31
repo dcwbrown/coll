@@ -89,8 +89,8 @@ TYPE
   Obj   = RECORD  kind, i: Int;  n, p, q: Ptr  END;
 
 VAR
-  Tree:     Ptr;
-  NilToken: Ptr;
+  PrefixTree: Ptr;
+  NilToken:   Ptr;
 
 (* ------------------------------------------------------------------------ *)
 
@@ -176,6 +176,12 @@ BEGIN
   END
 END MatchPattern;
 
+PROCEDURE EvaluateMatch(p: Ptr): Int;
+BEGIN
+  MatchPattern(p.p, p.q);
+  RETURN BoolVal((p.p.i = p.q.i) & ~More(p.q))  (* Whether key is entirely matched *)
+END EvaluateMatch;
+
 PROCEDURE EvaluateMerge(VAR r: Ptr): Int;
 VAR p, k: Ptr;  (* Pattern and Key *)
 BEGIN  p := r.p;  k := r.q;
@@ -220,7 +226,7 @@ BEGIN CASE p.kind OF
 |And:        RETURN BoolVal((p.p.i # 0) &  (p.q.i # 0))
 |Or:         RETURN BoolVal((p.p.i # 0) OR (p.q.i # 0))
 |Equal:      RETURN BoolVal(p.p.i = p.q.i)
-|Match:      MatchPattern(p.p, p.q); RETURN BoolVal((p.p.i = p.q.i) & ~More(p.q))  (* Whether key is entirely matched *)
+|Match:      RETURN EvaluateMatch(p)
 |Merge:      RETURN EvaluateMerge(p)
 ELSE         w.s("Evaluate passed unexpected kind "); wkind(p.kind); Fail(".")
 END END Evaluate;
@@ -433,6 +439,9 @@ VAR
     token.n    := NIL;
   END OperatorToken;
 
+  PROCEDURE TheTreeToken;
+  BEGIN  characters := characters.n;  token := PrefixTree;  END TheTreeToken;
+
   PROCEDURE ParseToken(leading: BOOLEAN);
   BEGIN
     token := NIL;
@@ -444,7 +453,8 @@ VAR
     ELSE
       CASE characters.i OF
       |30H..39H:  IntegerToken   (* 0..9 *)
-      |22H,27H:   StringToken    (* ' " *)
+      |22H,27H:   StringToken    (* ' "  *)
+      |74H:       TheTreeToken   (* t    *)
       ELSE        OperatorToken(leading)
       END
     END;
@@ -711,7 +721,6 @@ BEGIN
   TestParse(20, "'abc' , 'beta'    ");
   TestParse(20, "'abc' , 'abc'     ");
 
-  (*
   TestParse(20, "t                 ");
   TestParse(20, "t , 'a'           ");
   TestParse(20, "t , 'alpha'       ");
@@ -720,16 +729,16 @@ BEGIN
   TestParse(20, "t , 'abc'         ");
   TestParse(20, "t ? 'abc'         ");
   TestParse(20, "t , 'a'           ");
-  TestParse(20, "t ? 'al'");
-  TestParse(20, "t ? 'be'");
-  *)
+  TestParse(20, "t ? 'al'          ");
+  TestParse(20, "t ? 'xy'          ");
+  TestParse(20, "t ? 'be'          ");
   END Test;
 
 
 (* ------------------------------------------------------------------------ *)
 
 BEGIN
-  Tree := NewObj(Integer, NIL, ORD('/'));
+  PrefixTree := NewObj(Integer, NIL, ORD('/'));
   NEW(NilToken);  NilToken.kind := Nobj;  NilToken.i := 0;
 END Jobs.
 
