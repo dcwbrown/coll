@@ -28,7 +28,7 @@ CONST
   Iota      = 5;    (* a vector of 0 up to a limit         *)
   Repeat    = 6;    (* repeats a source multiple times     *)
 
-  Stepper   = 7;    (* Steps through algorithmic sequences *)
+  List      = 7;
 
   (* Monadic operators *)
   Negate    = 8;    (* monadic operators                   *)
@@ -61,21 +61,20 @@ CONST
   ObjLimit  = 28;
 
 
-  (*  ============ object ============      =========== stepper ============
-      Kind       p       q       i          p           q          i
-      --------   -----   -----   -----      ---------   --------   ---------
-      Integer    /       alt     value      first       curr int   curr val
-      Iota       parm    /       max        Iota        Iota       curr val
-      Repeat     parm1   parm2   iterno     Repeat      Repeat     curr val
-      Negate     parm    /       val
-      Not        parm    /       val
-      Square     parm    /       val
-      Add        parm1   parm2   val
-      Subtract   parm1   parm2   val
-      Multiply   parm1   parm2   val
-      Divide     parm1   parm2   val
-      Over       parm    /       val
-      Stepper    <See cols to right>
+  (*  ================== object ==================
+      Kind       p       q       i         j
+      --------   -----   -----   -------   ------
+      Integer    /       alt     value     /
+      Iota       parm    /       current   max
+      Repeat     parm1   parm2   current   iterno
+      Negate     parm    /       current   /
+      Not        parm    /       current   /
+      Square     parm    /       current   /
+      Add        parm1   parm2   current   /
+      Subtract   parm1   parm2   current   /
+      Multiply   parm1   parm2   current   /
+      Divide     parm1   parm2   current   /
+      List       first   current current   /
   *)
 
   (*  Reset   - reloads p.i with first value
@@ -86,7 +85,7 @@ CONST
 TYPE
   Int   = SYSTEM.INT64;
   Ptr   = POINTER TO Obj;
-  Obj   = RECORD  kind, i: Int;  n, p, q: Ptr  END;
+  Obj   = RECORD  kind, i, j: Int;  n, p, q: Ptr  END;
 
 VAR
   PrefixTree: Ptr;
@@ -108,7 +107,7 @@ BEGIN CASE k OF
 |Postfix:   w.s("Postfix")
 |Iota:      w.s("Iota")
 |Repeat:    w.s("Repeat")
-|Stepper:   w.s("Stepper")
+|List:      w.s("List")
 |Negate:    w.s("Negate")
 |Not:       w.s("Not")
 |Square:    w.s("Square")
@@ -149,8 +148,9 @@ RETURN result END EvaluateFactorial;
 PROCEDURE NewObj(kind: Int;  p: Ptr;  i: Int): Ptr;
 VAR obj: Ptr;
 BEGIN Assert(kind # Nobj, "NewObj passed object kind Nobj.");
-  NEW(obj);
-  obj.kind := kind;  obj.p := p;  obj.i  := i;
+  NEW(obj); obj.kind := kind;
+  obj.p := p;  obj.q := NIL;
+  obj.i := i;  obj.j := 0;
 RETURN obj END NewObj;
 
 PROCEDURE BoolVal(b: BOOLEAN): Int;
@@ -160,6 +160,7 @@ PROCEDURE^ Reset(VAR p: Ptr);
 PROCEDURE^ Advance(p: Ptr);
 PROCEDURE^ More(p: Ptr): BOOLEAN;
 
+(*
 PROCEDURE MatchPattern(VAR p, k: Ptr);  (* pattern, key *)
 BEGIN
   Assert(p.kind = Stepper, "MatchPattern expects pattern to be stepper.");
@@ -208,89 +209,86 @@ BEGIN  p := r.p;  k := r.q;
     RETURN 1
   END
 END EvaluateMerge;
+*)
 
-
-PROCEDURE Evaluate(p: Ptr): Int;
+PROCEDURE Evaluate(p: Ptr);
 BEGIN CASE p.kind OF
-|Stepper:    Fail("Evaluate passed Stepper.");
-|Negate:     RETURN -p.p.i
-|Identity:   RETURN p.p.i
-|Factorial:  RETURN EvaluateFactorial(p.p.i)
-|Not:        RETURN BoolVal(p.p.i = 0)
-|Square:     RETURN p.p.i  *  p.p.i
-|Add:        RETURN p.p.i  +  p.q.i
-|Subtract:   RETURN p.p.i  -  p.q.i
-|Multiply:   RETURN p.p.i  *  p.q.i
-|Divide:     RETURN p.p.i DIV p.q.i
-|Modulo:     RETURN p.p.i MOD p.q.i
-|And:        RETURN BoolVal((p.p.i # 0) &  (p.q.i # 0))
-|Or:         RETURN BoolVal((p.p.i # 0) OR (p.q.i # 0))
-|Equal:      RETURN BoolVal(p.p.i = p.q.i)
-|Match:      RETURN EvaluateMatch(p)
-|Merge:      RETURN EvaluateMerge(p)
+|List:       Fail("Evaluate passed List.");
+|Negate:     p.i := -p.p.i
+|Identity:   p.i := p.p.i
+|Factorial:  p.i := EvaluateFactorial(p.p.i)
+|Not:        p.i := BoolVal(p.p.i = 0)
+|Square:     p.i := p.p.i  *  p.p.i
+|Add:        p.i := p.p.i  +  p.q.i
+|Subtract:   p.i := p.p.i  -  p.q.i
+|Multiply:   p.i := p.p.i  *  p.q.i
+|Divide:     p.i := p.p.i DIV p.q.i
+|Modulo:     p.i := p.p.i MOD p.q.i
+|And:        p.i := BoolVal((p.p.i # 0) &  (p.q.i # 0))
+|Or:         p.i := BoolVal((p.p.i # 0) OR (p.q.i # 0))
+|Equal:      p.i := BoolVal(p.p.i = p.q.i)
+(*
+|Match:      p.i := EvaluateMatch(p)
+|Merge:      p.i := EvaluateMerge(p)
+*)
 ELSE         w.s("Evaluate passed unexpected kind "); wkind(p.kind); Fail(".")
 END END Evaluate;
 
-PROCEDURE ResetObject(p: Ptr): Int;
+PROCEDURE^ Reset(VAR p: Ptr);
+
+PROCEDURE ResetSingle(p: Ptr);
 VAR i: Int;
-BEGIN
+BEGIN IF p # NIL THEN
   CASE p.kind OF
-  |Integer: RETURN p.i
-  |Iota:    Reset(p.p);  p.i := p.p.i;  RETURN 0
-  |Repeat:  Reset(p.p);  Reset(p.q);  p.i := 0;  RETURN p.q.i;
-  |Product: Reset(p.p);  i := p.p.i;  WHILE (i # 0) & More(p.p) DO Advance(p.p); i := i * p.p.i END; RETURN i
-  |Sum:     Reset(p.p);  i := p.p.i;  WHILE More(p.p) DO Advance(p.p); INC(i, p.p.i) END; RETURN i
-  ELSE      Reset(p.p);  Reset(p.q);  RETURN Evaluate(p)
+  |Nobj:    Fail("Attempt to reset Nobj.")
+  |Integer:
+  |List:    p.q := p.p;  Reset(p.q);  p.i := p.q.i
+  |Iota:    Reset(p.p);  p.i := 0;  p.j := p.p.i
+  |Repeat:  Reset(p.p);  Reset(p.q);  p.i := p.q.i;  p.j := 0
+  |Product: Reset(p.p);  i := p.p.i;
+            WHILE (i # 0) & More(p.p) DO Advance(p.p); i := i * p.p.i END;
+            p.i := i
+  |Sum:     Reset(p.p);  i := p.p.i;
+            WHILE More(p.p) DO Advance(p.p); INC(i, p.p.i) END;
+            p.i := i
+  ELSE      Reset(p.p);  Reset(p.q);  Evaluate(p)
   END
-END ResetObject;
+END END ResetSingle;
 
 PROCEDURE Reset(VAR p: Ptr);
 BEGIN IF p # NIL THEN
-  Assert(p.kind # Nobj, "Attempt to reset Nobj.");
-  IF p.kind # Stepper THEN p := NewObj(Stepper, p, 0) END;
-  p.q := p.p;
-  p.i := ResetObject(p.q)
+  ResetSingle(p);
+  IF p.n # NIL THEN p := NewObj(List, p, p.i);  p.q := p.p END
 END END Reset;
 
 PROCEDURE More(p: Ptr): BOOLEAN;
-BEGIN
-  IF p = NIL THEN RETURN FALSE END;
-  IF p.kind # Stepper THEN w.s("Expected stepper in More, got "); wkind(p.kind); w.sl(".") END;
-  IF p.q.n # NIL THEN RETURN TRUE END;
-  CASE p.q.kind OF
-  |Integer, Match, Merge, Product, Sum: RETURN FALSE
-  |Iota:    RETURN p.i < p.q.i-1
-  |Repeat:  RETURN (p.q.i < p.q.p.i-1) OR More(p.q.q)
-  ELSE      RETURN More(p.q.p) OR More(p.q.q)
+VAR result: BOOLEAN;
+BEGIN result := FALSE;
+  IF p # NIL THEN
+    CASE p.kind OF
+    |Integer, Match, Merge, Product, Sum:
+    |List:    result := (p.q.n # NIL) OR More(p.q)
+    |Iota:    result := p.i < p.j-1
+    |Repeat:  result := (p.j < p.p.i-1) OR More(p.q)
+    ELSE      result := More(p.p) OR More(p.q)
+    END
   END;
-RETURN FALSE END More;
-
-PROCEDURE Next(p: Ptr);
-BEGIN
-  IF p.kind # Stepper THEN w.s("Expected stepper in Next, got "); wkind(p.kind); w.sl(".") END;
-  Assert(p.q.n # NIL, "Expected non-nil p.q.n in Next");
-  p.q := p.q.n;
-  p.i := ResetObject(p.q)
-END Next;
+RETURN result END More;
 
 PROCEDURE Advance(p: Ptr);
 BEGIN IF p # NIL THEN
-  IF p.kind # Stepper THEN w.s("Expected stepper in Advance, got "); wkind(p.kind); w.sl(".") END;
-  IF ~More(p) THEN RETURN END;
-  CASE p.q.kind OF
-  |Integer: Next(p)
-  |Iota:    IF p.i < p.q.i-1 THEN INC(p.i) ELSE Next(p) END
-  |Repeat:  IF More(p.q.q) THEN
-              Advance(p.q.q); p.i := p.q.q.i
-            ELSIF p.q.i < p.q.p.i-1 THEN
-              Reset(p.q.q); INC(p.q.i); p.i := p.q.q.i
-            ELSE
-              Next(p)
+  CASE p.kind OF
+  |Integer:
+  |List:    IF    More(p.q)   THEN  Advance(p.q)
+            ELSIF p.q.n # NIL THEN  p.q := p.q.n;  ResetSingle(p.q)
             END;
-  ELSE      IF More(p.q.p) OR More(p.q.q) THEN
-              Advance(p.q.p);  Advance(p.q.q);  p.i := Evaluate(p.q)
-            ELSE
-              Next(p)
+            p.i := p.q.i
+  |Iota:    IF p.i < p.j-1 THEN INC(p.i) END
+  |Repeat:  IF More(p.q)         THEN  Advance(p.q); p.i := p.q.i
+            ELSIF p.j < p.p.i-1  THEN  Reset(p.q); INC(p.j); p.i := p.q.i
+            END
+  ELSE      IF More(p.p) OR More(p.q) THEN
+              Advance(p.p);  Advance(p.q);  Evaluate(p)
             END
   END
 END END Advance;
@@ -538,13 +536,14 @@ VAR
 
 
 BEGIN tree := NIL;
-  (* w.sl("Parse."); *)
+  (* w.c("P"); w.fl; *)
   characters := ImportUTF8(s);
   (* w.s("Characters imported, first character "); w.i(characters.i); w.sl("."); *)
   IF characters # NIL THEN
     ParseToken(TRUE);
     tree := ParseInfixExpression(0)
   END;
+  (* w.c("p"); w.fl; *)
 RETURN tree END Parse;
 
 
@@ -552,7 +551,7 @@ RETURN tree END Parse;
 
 PROCEDURE Print(p: Ptr);
 BEGIN
-  Reset(p);  w.i(p.i);  WHILE More(p) DO Advance(p); w.i(p.i) END
+  Reset(p); w.i(p.i);  WHILE More(p) DO Advance(p); w.i(p.i) END
 END Print;
 
 PROCEDURE^ PrintTree(p: Ptr; indent: Int);
@@ -664,11 +663,11 @@ BEGIN
   TestParse(20, "0+1-2-3-4         ");
   TestParse(20, "1-2-3-4           ");
   TestParse(20, "1+2-(5-1)         ");
-  TestParse(20, "1 1               ");
-  TestParse(20, "(1) (1)           ");
+  TestParse(20, "1 2               ");
+  TestParse(20, "(1) (2)           ");
   TestParse(20, "-1 1              ");
   TestParse(20, "1 -1              ");
-  TestParse(20, "1 -1 1            ");
+  TestParse(20, "1 -1 2            ");
   TestParse(20, "1 2 3 4           ");
   TestParse(20, "1 -2 3 -4 5       ");
   TestParse(20, "1 +2              ");
