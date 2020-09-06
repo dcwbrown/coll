@@ -14,7 +14,7 @@ MODULE Jobs;  IMPORT w, Codespace, Codegen, SYSTEM;
 
 CONST
   (* Object kinds *)
-  Nobj      = 0;    (* None                                *)
+  None      = 0;
 
   (* Scalar/linked list types *)
   Integer   = 1;    (* a singleton integer value           *)
@@ -24,7 +24,6 @@ CONST
   Infix     = 3;
   Postfix   = 4;
 
-  (* Other steppables needing a stepper object *)
   Iota      = 5;    (* a vector of 0 up to a limit         *)
   Repeat    = 6;    (* repeats a source multiple times     *)
 
@@ -38,27 +37,28 @@ CONST
   Factorial = 12;
   Sum       = 13;
   Product   = 14;
+  Dump      = 15;
 
   (* Dyadic operators *)
-  Add       = 15;
-  Subtract  = 16;
-  Multiply  = 17;
-  Divide    = 18;
-  Power     = 19;
-  Modulo    = 20;
-  And       = 21;
-  Or        = 22;
-  Equal     = 23;   (* returns 0s and 1s                   *)
+  Add       = 16;
+  Subtract  = 17;
+  Multiply  = 18;
+  Divide    = 19;
+  Power     = 20;
+  Modulo    = 21;
+  And       = 22;
+  Or        = 23;
+  Equal     = 24;   (* returns 0s and 1s                   *)
 
   (* Reduction operators *)
-  Match     = 24;   (* walk match tree                     *)
-  Merge     = 25;   (* merge into match tree               *)
+  Match     = 25;   (* walk match tree                     *)
+  Merge     = 26;   (* merge into match tree               *)
 
   (* Tokens *)
-  Open      = 26;   (* Parse of '(' *)
-  Close     = 27;   (* Parse of ')' *)
+  Open      = 27;   (* Parse of '(' *)
+  Close     = 28;   (* Parse of ')' *)
 
-  ObjLimit  = 28;
+  ObjLimit  = 29;
 
 
   (*  ================== object ==================
@@ -85,11 +85,11 @@ CONST
 TYPE
   Int   = SYSTEM.INT64;
   Ptr   = POINTER TO Obj;
-  Obj   = RECORD  kind, i, j: Int;  n, p, q: Ptr  END;
+  Obj   = RECORD  kind, i, j: Int;  n, o, p, q: Ptr  END;
 
 VAR
+  Nothing:    Ptr;
   PrefixTree: Ptr;
-  NilToken:   Ptr;
 
 (* ------------------------------------------------------------------------ *)
 
@@ -100,7 +100,7 @@ PROCEDURE Assert(t: BOOLEAN; s: ARRAY [1] OF CHAR); BEGIN w.Assert(t, s) END Ass
 
 PROCEDURE wkind(k: Int);
 BEGIN CASE k OF
-|Nobj:      w.s("Nobj")
+|None:      w.s("None")
 |Integer:   w.s("Integer")
 |Prefix:    w.s("Prefix")
 |Infix:     w.s("Infix")
@@ -115,6 +115,7 @@ BEGIN CASE k OF
 |Factorial: w.s("Factorial")
 |Sum:       w.s("Sum")
 |Product:   w.s("Product")
+|Dump:      w.s("Dump")
 |Add:       w.s("Add")
 |Subtract:  w.s("Subtract")
 |Multiply:  w.s("Multiply")
@@ -147,7 +148,7 @@ RETURN result END EvaluateFactorial;
 
 PROCEDURE NewObj(kind: Int;  p: Ptr;  i: Int): Ptr;
 VAR obj: Ptr;
-BEGIN Assert(kind # Nobj, "NewObj passed object kind Nobj.");
+BEGIN Assert(kind # None, "NewObj passed object kind None.");
   NEW(obj); obj.kind := kind;
   obj.p := p;  obj.q := NIL;
   obj.i := i;  obj.j := 0;
@@ -157,59 +158,14 @@ PROCEDURE BoolVal(b: BOOLEAN): Int;
 BEGIN IF b THEN RETURN 1 ELSE RETURN 0 END END BoolVal;
 
 PROCEDURE^ Reset(VAR p: Ptr);
-PROCEDURE^ Advance(p: Ptr);
 PROCEDURE^ More(p: Ptr): BOOLEAN;
+PROCEDURE^ Advance(p: Ptr);
+PROCEDURE^ Alt(p: Ptr): BOOLEAN;
+PROCEDURE^ Branch(p: Ptr);
 
-(*
-PROCEDURE MatchPattern(VAR p, k: Ptr);  (* pattern, key *)
-BEGIN
-  Assert(p.kind = Stepper, "MatchPattern expects pattern to be stepper.");
-  Assert(k.kind = Stepper, "MatchPattern expects key to be stepper.");
-  LOOP
-    WHILE (p.q.kind = Integer) & (k.i # p.i) & (p.q.q # NIL) DO
-      p.q := p.q.q;  p.i := p.q.i;
-    END;
-    IF (k.i = p.i) & More(k) & More(p) THEN
-      Advance(k); Advance(p)
-    ELSE
-      EXIT
-    END
-  END
-END MatchPattern;
-
-PROCEDURE EvaluateMatch(p: Ptr): Int;
-BEGIN
-  MatchPattern(p.p, p.q);
-  RETURN BoolVal((p.p.i = p.q.i) & ~More(p.q))  (* Whether key is entirely matched *)
-END EvaluateMatch;
-
-PROCEDURE EvaluateMerge(VAR r: Ptr): Int;
-VAR p, k: Ptr;  (* Pattern and Key *)
-BEGIN  p := r.p;  k := r.q;
-  MatchPattern(p, k);
-  Assert(p.kind = Stepper, "Merge expects pattern to be stepper.");
-  Assert(k.kind = Stepper, "Merge expects key to be stepper.");
-  IF p.i = k.i THEN  (* At least partial match *)
-    IF More(k) THEN
-      Assert(p.q.kind = Integer, "Cannot merge key to non-integer.");
-      Assert(k.q.kind = Integer, "Cannot merge key from non-integer.");
-      Assert(p.q.n = NIL,        "Internal failure, attempt to merge to middle of pattern.");
-      p.q.n := k.q.n;
-      RETURN 1  (* Success *)
-    ELSE
-      (* IF ~More(p) THEN w.sl("EvaluateMerge warning: Pattern incomplete at end of key.") END; *)
-      RETURN 0  (* No action taken *)
-    END
-  ELSE  (* Found first mismatch *)
-    (* Insert current pos in key as alternate in current pos of pattern *)
-    Assert(p.q.kind = Integer, "Merge expects current pattern to be integer.");
-    Assert(k.q.kind = Integer, "Merge expects current key to be integer.");
-    Assert(p.q.q = NIL, "Internal failure, merge has not reached last existing alternative.");
-    p.q.q := k.q;
-    RETURN 1
-  END
-END EvaluateMerge;
-*)
+PROCEDURE^ EvaluateMatch(p: Ptr);
+PROCEDURE^ EvaluateMerge(r: Ptr);
+PROCEDURE^ EvaluateDump(p: Ptr);
 
 PROCEDURE Evaluate(p: Ptr);
 BEGIN CASE p.kind OF
@@ -227,10 +183,6 @@ BEGIN CASE p.kind OF
 |And:        p.i := BoolVal((p.p.i # 0) &  (p.q.i # 0))
 |Or:         p.i := BoolVal((p.p.i # 0) OR (p.q.i # 0))
 |Equal:      p.i := BoolVal(p.p.i = p.q.i)
-(*
-|Match:      p.i := EvaluateMatch(p)
-|Merge:      p.i := EvaluateMerge(p)
-*)
 ELSE         w.s("Evaluate passed unexpected kind "); wkind(p.kind); Fail(".")
 END END Evaluate;
 
@@ -240,7 +192,7 @@ PROCEDURE ResetSingle(p: Ptr);
 VAR i: Int;
 BEGIN IF p # NIL THEN
   CASE p.kind OF
-  |Nobj:    Fail("Attempt to reset Nobj.")
+  |None:    Fail("Attempt to reset None.")
   |Integer:
   |List:    p.q := p.p;  Reset(p.q);  p.i := p.q.i
   |Iota:    Reset(p.p);  p.i := 0;  p.j := p.p.i
@@ -251,14 +203,20 @@ BEGIN IF p # NIL THEN
   |Sum:     Reset(p.p);  i := p.p.i;
             WHILE More(p.p) DO Advance(p.p); INC(i, p.p.i) END;
             p.i := i
+  |Match:   EvaluateMatch(p)
+  |Merge:   EvaluateMerge(p)
+  |Dump:    EvaluateDump(p.p);
   ELSE      Reset(p.p);  Reset(p.q);  Evaluate(p)
   END
 END END ResetSingle;
 
+PROCEDURE ForceList(VAR p: Ptr);
+BEGIN IF p # NIL THEN p := NewObj(List, p, p.i);  p.q := p.p END END ForceList;
+
 PROCEDURE Reset(VAR p: Ptr);
 BEGIN IF p # NIL THEN
   ResetSingle(p);
-  IF p.n # NIL THEN p := NewObj(List, p, p.i);  p.q := p.p END
+  IF (p.n # NIL) OR (p.o # NIL) THEN ForceList(p) END
 END END Reset;
 
 PROCEDURE More(p: Ptr): BOOLEAN;
@@ -292,6 +250,117 @@ BEGIN IF p # NIL THEN
             END
   END
 END END Advance;
+
+PROCEDURE Alt(p: Ptr): BOOLEAN;
+BEGIN RETURN (p # NIL) & (p.kind = List) & (p.q.o # NIL) END Alt;
+
+PROCEDURE Branch(p: Ptr);
+BEGIN
+  IF (p # NIL) & (p.kind = List) & (p.q.o # NIL) THEN
+    p.q := p.q.o;  p.i := p.q.i
+  END
+END Branch;
+
+
+PROCEDURE MatchPattern(VAR p, k: Ptr);
+(* Assumes pattern (p) and key (k) both already reset. *)
+BEGIN
+  LOOP
+    WHILE (k.i # p.i) & Alt(p) DO Branch(p) END;
+    IF (k.i = p.i) & More(k) & More(p) THEN
+      Advance(k); Advance(p)
+    ELSE
+      EXIT
+    END
+  END
+END MatchPattern;
+
+PROCEDURE EvaluateMatch(p: Ptr);
+BEGIN
+  Reset(p.p);  Reset(p.q);  MatchPattern(p.p, p.q);
+  p.i := BoolVal((p.p.i = p.q.i) & ~More(p.q))  (* Whether key is entirely matched *)
+END EvaluateMatch;
+
+PROCEDURE T(s: ARRAY OF CHAR);
+BEGIN w.s(s); w.nb; w.fl END T;
+
+PROCEDURE EvaluateMerge(r: Ptr);
+(* TODO - handle merge into middle of iota or repeat *)
+VAR p, k: Ptr;  (* Pattern and Key *)
+BEGIN
+  Reset(r.p);  IF r.p.kind # List THEN ForceList(r.p) END;  p := r.p;
+  Reset(r.q);  IF r.q.kind # List THEN ForceList(r.q) END;  k := r.q;
+  T("M");
+
+  w.lc; w.s("Merge. p.kind "); wkind(p.kind); w.s(", p.i "); w.i(p.i);
+  w.s(", k.kind "); wkind(k.kind); w.s(", k.i "); w.i(k.i); w.l;
+
+  Assert(p.kind = List, "Expected pattern to be List at merge entry.");
+  Assert(p.q # NIL, "Expected pattern to have existing current object at merge entry.");
+  LOOP
+    WHILE (k.i # p.i) & Alt(p) DO w.c("B"); Branch(p) END;
+    IF (k.i = p.i) & More(k) & More(p) THEN
+      Advance(k); Advance(p)
+    ELSE
+      EXIT
+    END
+  END;
+  IF p.i = k.i THEN  (* At least partial match *)
+    T("=");
+    IF More(k) THEN
+      Assert(p.q.n = NIL, "Expected pattern to be complete.");
+      p.q.n := k.q.n;
+      r.i := 1  (* Success *)
+    ELSE
+      (* IF ~More(p) THEN w.sl("EvaluateMerge warning: Pattern incomplete at end of key.") END; *)
+      r.i := 0  (* No action taken *)
+    END
+  ELSE  (* Found first mismatch *)
+    T("#");
+
+    w.lc; w.s(".. insert at mismatch. p.kind "); wkind(p.kind); w.s(", p.i "); w.i(p.i);
+    w.s(", k.kind "); wkind(k.kind); w.s(", k.i "); w.i(k.i); w.l;
+
+    (* Insert current pos in key as alternate in current pos of pattern *)
+    Assert(p.q # NIL, "Expected pattern to be positioned at non-match.");
+    Assert(p.q.o = NIL, "Expected pattern to be position at last (or only) alternative.");
+    IF k.kind = List THEN
+      p.q.o := k.q
+    ELSE
+      p.q.o := k
+    END;
+    Assert(p.q.o # NIL, "Expected alternative to be non-NIL after merge.");
+    r.i := 1
+  END
+  ;T("m")
+END EvaluateMerge;
+
+PROCEDURE DumpInner(s: ARRAY OF CHAR; o: Int; p: Ptr);
+VAR q: Ptr;
+BEGIN
+  Assert(p.kind = List, "DumpInner expected list.");
+  q := p.q.o;
+  IF (p.i >= 32) & (p.i < 127) THEN s[o] := CHR(p.i) ELSE s[o] := '.' END;
+  IF More(p) THEN
+    Advance(p); DumpInner(s, o+1, p)
+  ELSE
+    s[o+1] := 0X; w.s(s); w.l
+  END;
+  IF q # NIL THEN
+    s[o] := 0X;
+    p.q := q;  p.i := q.i;  DumpInner(s, o, p)
+  END
+END DumpInner;
+
+PROCEDURE EvaluateDump(p: Ptr);
+VAR s: ARRAY 200 OF CHAR;
+BEGIN
+  s := "    ";
+  Reset(p);  IF p.kind # List THEN ForceList(p) END;
+  w.lc;  DumpInner(s, 4, p);
+  p.i := 0;
+END EvaluateDump;
+
 
 (* ------------------------------------------------------------------------ *)
 
@@ -423,6 +492,7 @@ VAR
     |2CH:  (* , *) characters.kind := Infix;    characters.i := Merge
 
     |21H:  (* ! *) characters.kind := Postfix;  characters.i := Factorial
+    |2EH:  (* . *) characters.kind := Postfix;  characters.i := Dump
 
     ELSE
       IF    characters.i = 220FH (* ∏ *) THEN characters.kind := Prefix;  characters.i := Product
@@ -447,7 +517,7 @@ VAR
       leading := TRUE;
       characters := characters.n
     END;
-    IF characters = NIL THEN token := NilToken
+    IF characters = NIL THEN token := Nothing
     ELSE
       CASE characters.i OF
       |30H..39H:  IntegerToken   (* 0..9 *)
@@ -575,7 +645,7 @@ END PrintTree;
 PROCEDURE wexpr(e: Ptr);
   PROCEDURE winfix  (op: ARRAY OF CHAR); BEGIN wexpr(e.p); w.s(op); wexpr(e.q) END winfix;
   PROCEDURE wprefix (op: ARRAY OF CHAR); BEGIN w.s(op); wexpr(e.p)             END wprefix;
-  PROCEDURE wpostfix(op: ARRAY OF CHAR); BEGIN wexpr(e.p); w.c("!")            END wpostfix;
+  PROCEDURE wpostfix(op: ARRAY OF CHAR); BEGIN wexpr(e.p); w.s(op)             END wpostfix;
 BEGIN
   IF (e.kind = Integer) & (e.n = NIL) THEN
     w.i(e.i)
@@ -598,6 +668,7 @@ BEGIN
       |Negate:     wprefix("-")
       |Identity:   wprefix("+")
       |Factorial:  wpostfix("!")
+      |Dump:       wpostfix(".")
       ELSE         w.c("?")
       END;
       e := e.n;
@@ -720,25 +791,36 @@ BEGIN
   TestParse(20, "'abc' , 'beta'    ");
   TestParse(20, "'abc' , 'abc'     ");
 
+  TestParse(20, "'abc'.            ");
+
   TestParse(20, "t                 ");
   TestParse(20, "t , 'a'           ");
+  TestParse(20, "t.                ");
+  TestParse(20, "t , 'A'           ");
+  TestParse(20, "t.                ");
   TestParse(20, "t , 'alpha'       ");
+  TestParse(20, "t.                ");
   TestParse(20, "t , 'beta'        ");
+  TestParse(20, "t.                ");
   TestParse(20, "t , 'abc'         ");
+  TestParse(20, "t.                ");
   TestParse(20, "t , 'abc'         ");
+  TestParse(20, "t.                ");
   TestParse(20, "t ? 'abc'         ");
   TestParse(20, "t , 'a'           ");
+  TestParse(20, "t.                ");
   TestParse(20, "t ? 'al'          ");
   TestParse(20, "t ? 'xy'          ");
   TestParse(20, "t ? 'be'          ");
-  END Test;
+END Test;
 
 
 (* ------------------------------------------------------------------------ *)
 
 BEGIN
-  PrefixTree := NewObj(Integer, NIL, ORD('/'));
-  NEW(NilToken);  NilToken.kind := Nobj;  NilToken.i := 0;
+  (* 'Nothing' is the one and only object of kind 'None' *)
+  NEW(Nothing);  Nothing.kind := None;  Nothing.i := 0;  Nothing.j := 0;
+  PrefixTree := (* Nothing *) NewObj(Integer, NIL, ORD('/'));
 END Jobs.
 
 
